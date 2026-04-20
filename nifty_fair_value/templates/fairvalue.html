@@ -161,9 +161,8 @@
         .gap-card-interp { font-size: 10px; color: var(--text-muted); line-height: 1.4; margin-top: 4px; }
 
         /* ── Key Levels Strip ───────────────────────────────────── */
-        .levels-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-        @media (max-width: 900px) { .levels-strip { grid-template-columns: repeat(2, 1fr); } }
-        @media (max-width: 500px) { .levels-strip { grid-template-columns: 1fr 1fr; } }
+        .levels-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+        @media (max-width: 700px) { .levels-strip { grid-template-columns: repeat(2, 1fr); } }
         .lv-card {
             background: var(--card-inner); border-radius: 10px;
             border: 1px solid var(--glass-border); padding: 12px 14px;
@@ -378,11 +377,17 @@
         <div class="section-title">Key Levels</div>
         <div class="levels-strip">
 
-            <!-- Row 1: Price & Fair Value anchors -->
+            <!-- Row 1: Live prices -->
             <div class="lv-card">
                 <div class="lv-label">Spot</div>
                 <div class="lv-val" id="lv-spot">—</div>
                 <div class="lv-sub" id="lv-spot-sig">—</div>
+            </div>
+
+            <div class="lv-card">
+                <div class="lv-label">Futures LTP</div>
+                <div class="lv-val" style="color:var(--amber);" id="lv-futures">—</div>
+                <div class="lv-sub" id="lv-futures-sub">—</div>
             </div>
 
             <div class="lv-card">
@@ -391,6 +396,7 @@
                 <div class="lv-sub" id="lv-atm-sub">—</div>
             </div>
 
+            <!-- Row 2: Fair value anchors -->
             <div class="lv-card">
                 <div class="lv-label">Today's Fair Value</div>
                 <div class="lv-val" style="color:var(--emerald);" id="lv-today-fv">—</div>
@@ -403,13 +409,13 @@
                 <div class="lv-sub" id="lv-expiry-fv-sub">—</div>
             </div>
 
-            <!-- Row 2: Options structure -->
             <div class="lv-card">
                 <div class="lv-label">Max Pain</div>
                 <div class="lv-val" style="color:var(--rose);" id="lv-maxpain">—</div>
                 <div class="lv-sub" id="lv-pain-depth">—</div>
             </div>
 
+            <!-- Row 3: Options structure -->
             <div class="lv-card">
                 <div class="lv-label">Straddle Range</div>
                 <div class="lv-val" style="font-size:14px; color:var(--amber);" id="lv-straddle-range">—</div>
@@ -602,6 +608,16 @@
     function renderLevels(d) {
         set('lv-spot', fmt(d.spot, 1));
         set('lv-spot-sig', d.spot_signal || '—');
+
+        // Futures LTP — basis vs spot
+        const fut = d.futures;
+        set('lv-futures', fut != null ? fmt(fut, 1) : '—');
+        if (fut != null && spot != null) {
+            const basis = fut - spot;
+            set('lv-futures-sub', basis >= 0
+                ? `+${fmt(basis, 1)} pts basis`
+                : `${fmt(basis, 1)} pts basis`);
+        }
 
         set('lv-atm', d.atm_strike ? fmt(d.atm_strike, 0) : '—');
         set('lv-atm-sub', d.skew_shift != null ? `Skew: ${d.skew_shift >= 0 ? '+' : ''}${d.skew_shift} pts` : '—');
