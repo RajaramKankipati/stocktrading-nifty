@@ -1,4 +1,4 @@
-def classify_regime(spot, theoretical_price, max_pain_strike, directional_bias="NEUTRAL"):
+def classify_regime(spot, theoretical_price, max_pain_strike, directional_bias="NEUTRAL", pain_depth=None):
     """
     PRD Module 5: Three-gap regime classification.
     
@@ -39,13 +39,13 @@ def classify_regime(spot, theoretical_price, max_pain_strike, directional_bias="
         regime    = "DOUBLE_OVERVALUED"
         bias      = "SHORT"
         rationale = f"Spot +{intraday_g:.0f}pts above intraday fair and +{expiry_g:.0f}pts above Max Pain — both pulling down"
-        confidence = "HIGH" if directional_bias in ("BEARISH", "WEAK BEAR") else "MEDIUM"
+        confidence = "HIGH" if directional_bias == "BEARISH" else "MEDIUM"
 
     elif intraday_cheap and expiry_below:
         regime    = "DOUBLE_UNDERVALUED"
         bias      = "LONG"
         rationale = f"Spot {intraday_g:.0f}pts below intraday fair and {expiry_g:.0f}pts below Max Pain — both pulling up"
-        confidence = "HIGH" if directional_bias in ("BULLISH", "WEAK BULL") else "MEDIUM"
+        confidence = "HIGH" if directional_bias == "BULLISH" else "MEDIUM"
 
     elif intraday_rich and expiry_below:
         regime    = "INTRADAY_TRAP"
@@ -61,7 +61,7 @@ def classify_regime(spot, theoretical_price, max_pain_strike, directional_bias="
 
     elif fairs_diverged:
         regime    = "TREND_DAY"
-        bias      = "LONG" if align_g > 0 else "SHORT"
+        bias      = "WITH_TREND" if align_g > 0 else "COUNTER_TREND"
         rationale = f"Intraday and expiry fairs diverged by {align_g:.0f}pts — trending session, fade with caution"
         confidence = "MEDIUM"
 
@@ -72,11 +72,12 @@ def classify_regime(spot, theoretical_price, max_pain_strike, directional_bias="
         confidence = "LOW"
 
     return {
-        "regime":        regime,
-        "bias":          bias,
-        "confidence":    confidence,
-        "rationale":     rationale,
-        "intraday_gap":  intraday_g,
-        "expiry_gap":    expiry_g,
-        "alignment_gap": align_g,
+        "regime":          regime,
+        "bias":            bias,
+        "confidence":      confidence,
+        "rationale":       rationale,
+        "intraday_gap":    intraday_g,
+        "expiry_gap":      expiry_g,
+        "alignment_gap":   align_g,
+        "pain_well_depth": pain_depth,
     }

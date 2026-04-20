@@ -14,7 +14,7 @@ from growwapi import GrowwAPI
 from config import settings
 from data.groww_client import GrowwClient, validate_chain
 from engine.atm_selector import find_true_atm
-from engine.synthetic import theoretical_price_pcp, futures_microprice, validate_theoretical_prices
+from engine.synthetic import theoretical_price_pcp, futures_microprice, validate_theoretical_prices, breeden_litzenberger
 from engine.oi_weighted import oi_weighted_levels
 from engine.max_pain import max_pain
 from engine.fair_value import (
@@ -67,6 +67,10 @@ def poller():
                 if not opt_expiry or not fut_expiry:
                     raise Exception("Could not discover active Nifty expiries.")
 
+                today = datetime.now().date()
+                opt_dte = (datetime.strptime(opt_expiry, "%Y-%m-%d").date() - today).days
+                fut_dte = (datetime.strptime(fut_expiry, "%Y-%m-%d").date() - today).days
+
                 market_data = client.get_market_data(settings.UNDERLYING, opt_expiry, fut_expiry)
 
                 # ── Data Validation (PRD §3.3) ──
@@ -99,7 +103,15 @@ def poller():
                     market_data.bid_price, market_data.offer_price,
                     market_data.bid_quantity, market_data.offer_quantity
                 )
-                theo_validation = validate_theoretical_prices(theo_price, microprice)
+
+                # Breeden-Litzenberger (expiry week only: DTE <= 2)
+                bl_price = None
+                if opt_dte <= 2:
+                    bl_price, _, _, _, _ = breeden_litzenberger(
+                        market_data.options, market_data.spot, T_days=max(opt_dte, 1)
+                    )
+
+                theo_validation = validate_theoretical_prices(theo_price, microprice, bl_price)
 
                 # ── Module 4: OI Levels & Max Pain ──
                 oi_levels = oi_weighted_levels(market_data.options, market_data.spot)
@@ -110,10 +122,6 @@ def poller():
 
                 if not baselines and call_resistance and put_support:
                     baselines = {'call_level': call_resistance, 'put_level': put_support}
-
-                today = datetime.now().date()
-                opt_dte = (datetime.strptime(opt_expiry, "%Y-%m-%d").date() - today).days
-                fut_dte = (datetime.strptime(fut_expiry, "%Y-%m-%d").date() - today).days
 
                 # ── Straddle + PCR (needed before LS and regime) ──
                 sr  = calculate_straddle_range(true_atm_opt.call_ltp, true_atm_opt.put_ltp)
@@ -143,7 +151,8 @@ def poller():
                     spot=market_data.spot,
                     theoretical_price=theo_price,
                     max_pain_strike=mp_strike,
-                    directional_bias=today_fv_dict['directional_bias']
+                    directional_bias=today_fv_dict['directional_bias'],
+                    pain_depth=pain_depth
                 )
 
                 # ── LS Confidence + Decision (requires regime and pcr) ──
@@ -202,6 +211,7 @@ def poller():
                         "atm_iv"             : atm_iv,
                         "microprice"         : microprice,
                         "book_pressure"      : book_pressure,
+                        "bl_price"           : bl_price,
                         "theo_status"        : theo_validation['status'],
                         "theo_spread"        : theo_validation['spread'],
                         "arbitrage"          : market_data.futures - (theo_price or 0),

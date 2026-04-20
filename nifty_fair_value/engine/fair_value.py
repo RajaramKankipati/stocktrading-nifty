@@ -233,8 +233,8 @@ def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
         ),
         'strong_magnet': bool(pain_depth and pain_depth > 1.5),
         'intraday_aligned': (
-            (is_long  and intraday_gap is not None and intraday_gap < -15) or
-            (is_short and intraday_gap is not None and intraday_gap >  15)
+            (is_long  and intraday_gap is not None and intraday_gap < -20) or
+            (is_short and intraday_gap is not None and intraday_gap >  20)
         ),
         # FIX: default False — missing data must not boost confidence
         'in_oi_corridor': bool(spot_in_oi_corridor) if spot_in_oi_corridor is not None else False,
