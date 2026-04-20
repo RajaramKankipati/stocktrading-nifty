@@ -606,7 +606,8 @@
 
     // ── Key Levels ───────────────────────────────────────────────
     function renderLevels(d) {
-        set('lv-spot', fmt(d.spot, 1));
+        const spot = d.spot;
+        set('lv-spot', fmt(spot, 1));
         set('lv-spot-sig', d.spot_signal || '—');
 
         // Futures LTP — basis vs spot
@@ -623,7 +624,7 @@
         set('lv-atm-sub', d.skew_shift != null ? `Skew: ${d.skew_shift >= 0 ? '+' : ''}${d.skew_shift} pts` : '—');
 
         // Today's Fair Value — session anchor (avg of futures, synthetic, VWAP)
-        const tfv = d.today_fv, spot = d.spot;
+        const tfv = d.today_fv;
         set('lv-today-fv', tfv != null ? fmt(tfv, 1) : '—');
         if (tfv != null && spot != null) {
             const diff = spot - tfv;
