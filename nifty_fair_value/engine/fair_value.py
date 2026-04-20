@@ -58,13 +58,16 @@ def todays_fair_value(market_data, true_atm_opt, theoretical_price, r=0.065):
     else:
         spot_signal = f"SPOT CHEAP by {abs(spot_dev):.0f} pts — long candidate"
 
-    if excess_basis > 15 and oi_chg_pct > 0:
+    # Threshold 10 pts (previously 15): near-expiry carry is tiny (~4 pts at DTE=1)
+    # so 15 was unreachable most of the time. 10 is still above normal noise.
+    BIAS_THRESH = 10
+    if excess_basis > BIAS_THRESH and oi_chg_pct > 0:
         bias = "BULLISH — premium + OI build"
-    elif excess_basis < -15 and oi_chg_pct > 0:
+    elif excess_basis < -BIAS_THRESH and oi_chg_pct > 0:
         bias = "BEARISH — discount + OI build"
-    elif excess_basis > 15 and oi_chg_pct < 0:
+    elif excess_basis > BIAS_THRESH and oi_chg_pct < 0:
         bias = "WEAK BULL — premium but OI unwinding"
-    elif excess_basis < -15 and oi_chg_pct < 0:
+    elif excess_basis < -BIAS_THRESH and oi_chg_pct < 0:
         bias = "WEAK BEAR — discount but OI unwinding"
     else:
         bias = "NEUTRAL — no clear futures signal"
@@ -132,13 +135,17 @@ def expiry_fair_value(options, true_atm_opt, spot, max_pain_strike, pain_depth, 
 
 def today_fair(futures, synthetic, vwap):
     """
-    Adaptive average of Futures, Synthetic, VWAP. Excludes missing/zero values.
-    Kept for backward-compat with signals.py.
+    Session fair value for backward-compat with signals.py.
+    Groww does not provide futures VWAP (always 0), so averaging futures + synthetic
+    was mixing a basis-inflated price with a cash-equivalent price.
+    Return synthetic (OI-weighted PCP theoretical price) directly — it IS the
+    session fair value and is consistent with the intraday gap and confidence checks.
     """
-    values = [v for v in [futures, synthetic, vwap] if v is not None and v >= 10]
-    if not values:
-        return 0.0
-    return round(sum(values) / len(values), 2)
+    if synthetic is not None and synthetic >= 10:
+        return synthetic
+    if futures is not None and futures >= 10:
+        return futures
+    return 0.0
 
 
 def expiry_fair(call_oi_level, put_oi_level, max_pain):

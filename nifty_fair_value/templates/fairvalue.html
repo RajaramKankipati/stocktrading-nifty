@@ -623,16 +623,17 @@
         set('lv-atm', d.atm_strike ? fmt(d.atm_strike, 0) : '—');
         set('lv-atm-sub', d.skew_shift != null ? `Skew: ${d.skew_shift >= 0 ? '+' : ''}${d.skew_shift} pts` : '—');
 
-        // Today's Fair Value — session anchor (avg of futures, synthetic, VWAP)
-        const tfv = d.today_fv;
+        // Today's Fair Value = theoretical_price (OI-weighted PCP).
+        // This is the same anchor used by the IG gap strip and all confidence checks.
+        const tfv = d.theoretical_price;
+        const ig  = d.intraday_gap;
         set('lv-today-fv', tfv != null ? fmt(tfv, 1) : '—');
-        if (tfv != null && spot != null) {
-            const diff = spot - tfv;
+        if (ig != null) {
             const el = document.getElementById('lv-today-fv');
-            if (el) el.style.color = diff > 15 ? 'var(--rose)' : diff < -15 ? 'var(--emerald)' : 'var(--text-main)';
-            set('lv-today-fv-sub', diff > 15  ? `Spot +${fmt(diff,1)}pts above — rich`
-                                 : diff < -15 ? `Spot ${fmt(diff,1)}pts below — cheap`
-                                 :              `Spot near fair value`);
+            if (el) el.style.color = ig > 15 ? 'var(--rose)' : ig < -15 ? 'var(--emerald)' : 'var(--text-main)';
+            set('lv-today-fv-sub', ig > 15  ? `Spot +${fmt(ig,1)}pts above — rich`
+                                 : ig < -15 ? `Spot ${fmt(Math.abs(ig),1)}pts below — cheap`
+                                 :            `Spot near fair value`);
         }
 
         // Expiry Fair Value — settlement gravity anchor (Max Pain × 0.6 + OI mid × 0.4)
