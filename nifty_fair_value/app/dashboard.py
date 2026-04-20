@@ -168,7 +168,7 @@ def poller():
                     today_fv_dict.get('directional_bias', ''),
                     regime['intraday_gap'],
                     pain_depth,
-                    expiry_fv_dict.get('spot_in_oi_corridor'),
+                    regime['expiry_gap'],
                     pcr,
                     theo_reliable and chain_ok,
                     regime_bias=regime.get('bias')

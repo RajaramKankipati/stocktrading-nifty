@@ -24,30 +24,38 @@ def straddle_range(true_atm_opt):
     }
 
 
-def todays_fair_value(market_data, true_atm_opt, theoretical_price, r=0.065):
+def todays_fair_value(market_data, true_atm_opt, theoretical_price, r=0.065, d_yield=0.013):
     """
     PRD Module 3: Today's Fair Value — theoretical price as anchor,
     basis and VWAP as directional context, straddle for intraday range.
 
-    FIX: carry now uses OPTIONS expiry (weekly), not futures expiry (monthly),
-    which was overstating carry by up to 5× on expiry week.
+    FIX: basis now = futures_ltp - spot (direct cash-futures spread).
+    Previous basis = futures_ltp - theoretical_price mixed monthly futures
+    (DTE≈8) with weekly PCP (DTE=1), giving a wrong anchor.
+
+    FIX: carry uses FUTURES expiry DTE with net yield (r - dividend_yield).
+    Nifty dividend yield ≈1.3%, so effective carry ≈3.9%/yr.
+    Previous carry used opt_dte=1 (≈4pts) when futures DTE may be 8 (≈28pts).
+
+    FIX: vwap_deviation is None when Groww doesn't return VWAP (always 0).
+    Previously 0.0 was silently surfaced as if it were a real signal.
     """
     spot         = market_data.spot
     futures_ltp  = market_data.futures
     futures_vwap = market_data.futures_vwap
     oi_chg_pct   = market_data.futures_oi_chg_pct
 
-    # Use OPTIONS expiry for carry — this is the contract being priced
-    opt_dte = max(
-        (datetime.strptime(market_data.expiry, "%Y-%m-%d").date()
+    # Use FUTURES expiry for carry — basis is the cash-futures spread
+    fut_dte = max(
+        (datetime.strptime(market_data.futures_expiry, "%Y-%m-%d").date()
          - datetime.now().date()).days,
         1
     )
 
-    basis        = round(futures_ltp - theoretical_price, 2)
-    carry_approx = round(spot * r * (opt_dte / 365), 1)
+    basis        = round(futures_ltp - spot, 2)
+    carry_approx = round(spot * (r - d_yield) * (fut_dte / 365), 1)
     excess_basis = round(basis - carry_approx, 2)
-    vwap_dev     = round(theoretical_price - futures_vwap, 2) if futures_vwap > 0 else 0.0
+    vwap_dev     = round(theoretical_price - futures_vwap, 2) if futures_vwap > 0 else None
     spot_dev     = round(spot - theoretical_price, 2)
 
     NOISE = 15
@@ -82,7 +90,7 @@ def todays_fair_value(market_data, true_atm_opt, theoretical_price, r=0.065):
         'basis'            : basis,
         'carry_approx'     : carry_approx,
         'excess_basis'     : excess_basis,
-        'vwap_deviation'   : vwap_dev,
+        'vwap_deviation'   : vwap_dev,   # None when Groww doesn't provide VWAP
         'spot_deviation'   : spot_dev,
         'straddle_value'   : sr['straddle_value'],
         'intraday_upper'   : sr['expected_upper'],
@@ -90,6 +98,7 @@ def todays_fair_value(market_data, true_atm_opt, theoretical_price, r=0.065):
         'spot_signal'      : spot_signal,
         'directional_bias' : bias,
         'oi_change_pct'    : oi_chg_pct,
+        'fut_dte'          : fut_dte,
     }
 
 
@@ -203,23 +212,23 @@ def ls_direction(ls):
 
 
 def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
-                  spot_in_oi_corridor, pcr, data_reliable=True, regime_bias=None):
+                  expiry_gap, pcr, data_reliable=True, regime_bias=None):
     """
     Confidence score (0–5) for the LS direction signal.
 
     Checks:
-      1. futures_bias    — Futures basis + OI change agree with LS direction
-      2. strong_magnet   — Pain well depth > 1.5 (steep settlement gravity)
-      3. regime_aligned  — Three-gap regime bias (LONG/SHORT) matches LS direction.
-                           Replaces the broken intraday_aligned check. The old check
-                           used (spot − theoretical_price) with a ±20pt threshold, but
-                           theoretical price is OI-weighted PCP which tracks spot within
-                           3-8 pts by construction — the threshold was structurally
-                           unreachable and the check never fired.
-      4. in_oi_corridor  — Spot inside OI dealer corridor (gravitational field)
-      5. pcr_aligned     — PCR > 1.1 for LONG / < 0.9 for SHORT
+      1. futures_bias   — Futures basis + OI change agree with LS direction
+      2. strong_magnet  — Pain well depth > 1.5 (steep settlement gravity)
+      3. regime_aligned — Three-gap regime bias (LONG/SHORT) matches LS direction.
+                          Replaces the broken intraday_aligned check (PCP tracks
+                          spot within 3-8 pts by construction → ±20pt threshold
+                          was structurally unreachable).
+      4. expiry_pull    — Expiry gap > 30 pts in LS direction (spot measurably
+                          displaced from Max Pain). Replaces in_oi_corridor, which
+                          was trivially True after OTM-only filter (1,419pt corridor).
+      5. pcr_aligned    — PCR > 1.1 for LONG / < 0.9 for SHORT
 
-    `in_oi_corridor` defaults False when data is unavailable (fail-safe).
+    `expiry_pull` defaults False when data unavailable (fail-safe).
     `data_reliable=False` caps score at 1 (unreliable anchor = unreliable signal).
     """
     direction = ls_direction(ls)
@@ -239,8 +248,12 @@ def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
             (is_long  and regime_bias == 'LONG') or
             (is_short and regime_bias == 'SHORT')
         ),
-        # Default False — missing data must not boost confidence
-        'in_oi_corridor': bool(spot_in_oi_corridor) if spot_in_oi_corridor is not None else False,
+        # Spot measurably displaced from Max Pain in LS direction (>30 pts)
+        # Replaces in_oi_corridor which was trivially True by construction
+        'expiry_pull': (
+            (is_long  and expiry_gap is not None and expiry_gap < -30) or
+            (is_short and expiry_gap is not None and expiry_gap >  30)
+        ),
         'pcr_aligned': (
             (is_long  and pcr is not None and pcr > 1.1) or
             (is_short and pcr is not None and pcr < 0.9)

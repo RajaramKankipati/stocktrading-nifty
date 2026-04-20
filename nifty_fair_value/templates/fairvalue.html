@@ -335,7 +335,7 @@
                     <div class="check-item"><div class="check-dot check-off" id="chk-futures"></div><span>Futures bias aligned</span></div>
                     <div class="check-item"><div class="check-dot check-off" id="chk-magnet"></div><span>Strong pain magnet (&gt;1.5)</span></div>
                     <div class="check-item"><div class="check-dot check-off" id="chk-intraday"></div><span>Regime direction aligned</span></div>
-                    <div class="check-item"><div class="check-dot check-off" id="chk-corridor"></div><span>Spot inside OI corridor</span></div>
+                    <div class="check-item"><div class="check-dot check-off" id="chk-corridor"></div><span>Expiry pull &gt; 30 pts</span></div>
                     <div class="check-item"><div class="check-dot check-off" id="chk-pcr"></div><span>PCR aligned</span></div>
                 </div>
             </div>
@@ -572,7 +572,7 @@
         const checks = conf.checks || {};
         const dotMap = {
             'chk-futures': checks.futures_bias, 'chk-magnet': checks.strong_magnet,
-            'chk-intraday': checks.intraday_aligned, 'chk-corridor': checks.in_oi_corridor,
+            'chk-intraday': checks.intraday_aligned, 'chk-corridor': checks.expiry_pull,
             'chk-pcr': checks.pcr_aligned,
         };
         for (const [id, val] of Object.entries(dotMap)) {
@@ -636,7 +636,7 @@
                                  :            `Spot near fair value`);
         }
 
-        // Expiry Fair Value — settlement gravity anchor (Max Pain × 0.6 + OI mid × 0.4)
+        // Expiry Fair Value — settlement gravity anchor (Max Pain)
         const efv = d.expiry_fv;
         set('lv-expiry-fv', efv != null ? fmt(efv, 1) : '—');
         if (efv != null && spot != null) {
