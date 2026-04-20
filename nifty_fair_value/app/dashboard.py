@@ -104,11 +104,16 @@ def poller():
                     market_data.bid_quantity, market_data.offer_quantity
                 )
 
-                # Breeden-Litzenberger (expiry week only: DTE <= 2)
+                # Breeden-Litzenberger (DTE=2 only — not DTE=1/0).
+                # On expiry eve/day the chain is nearly expired: premiums collapse,
+                # the call surface second-derivative is near-zero everywhere, and BL
+                # returns an expected value far below spot (~1900pts off). This
+                # contaminates the cross-validation spread and triggers UNRELIABLE,
+                # blocking all signals on what is often the most active day.
                 bl_price = None
-                if opt_dte <= 2:
+                if opt_dte == 2:
                     bl_price, _, _, _, _ = breeden_litzenberger(
-                        market_data.options, market_data.spot, T_days=max(opt_dte, 1)
+                        market_data.options, market_data.spot, T_days=2
                     )
 
                 theo_validation = validate_theoretical_prices(theo_price, microprice, bl_price)
