@@ -157,28 +157,19 @@ def options_strategy(ls, ls_conf, atm_iv, opt_dte, options, atm_strike, spot, lo
         )
 
     # ── Determine strike offset and size ───────────────────────────────────
-    # ATM (offset=0): strong signal + normal/low IV
-    # 1-OTM (offset=1): moderate signal OR elevated/high IV (cheaper entry, defined risk)
+    # ATM (offset=0): strong signal + normal/low IV only
+    # 1-OTM (offset=1): elevated IV or weaker signal — cheaper entry, defined risk
     elevated_iv = iv_reg in ('ELEVATED', 'HIGH')
     strong      = abs_ls > 0.35 and score >= 4
 
     if strong and not elevated_iv:
-        offset    = 0
-        size_note = 'FULL SIZE'
-        style     = 'strong'
-    elif strong and elevated_iv:
-        offset    = 1
-        size_note = 'REDUCED SIZE'
-        style     = 'moderate'
-    elif abs_ls > 0.35 and score == 3:
-        offset    = 1
-        size_note = 'REDUCED SIZE'
-        style     = 'moderate'
+        offset, size_note, style = 0, 'FULL SIZE', 'strong'
+    elif abs_ls > 0.35:
+        # strong + elevated IV, or score == 3 — both prefer OTM to reduce premium risk
+        offset, size_note, style = 1, 'REDUCED SIZE', 'moderate'
     else:
-        # abs_ls 0.15–0.35, score 2–3
-        offset    = 1
-        size_note = 'SMALL SIZE'
-        style     = 'moderate'
+        # weak directional (0.15–0.35, score 2–3)
+        offset, size_note, style = 1, 'SMALL SIZE', 'moderate'
 
     opt    = _find_strike(options, atm_strike, side, offset)
     strike = opt.strike
