@@ -161,9 +161,9 @@
         .gap-card-interp { font-size: 10px; color: var(--text-muted); line-height: 1.4; margin-top: 4px; }
 
         /* ── Key Levels Strip ───────────────────────────────────── */
-        .levels-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
-        @media (max-width: 900px) { .levels-strip { grid-template-columns: repeat(3, 1fr); } }
-        @media (max-width: 500px) { .levels-strip { grid-template-columns: repeat(2, 1fr); } }
+        .levels-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+        @media (max-width: 900px) { .levels-strip { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 500px) { .levels-strip { grid-template-columns: 1fr 1fr; } }
         .lv-card {
             background: var(--card-inner); border-radius: 10px;
             border: 1px solid var(--glass-border); padding: 12px 14px;
@@ -378,6 +378,7 @@
         <div class="section-title">Key Levels</div>
         <div class="levels-strip">
 
+            <!-- Row 1: Price & Fair Value anchors -->
             <div class="lv-card">
                 <div class="lv-label">Spot</div>
                 <div class="lv-val" id="lv-spot">—</div>
@@ -391,8 +392,21 @@
             </div>
 
             <div class="lv-card">
+                <div class="lv-label">Today's Fair Value</div>
+                <div class="lv-val" style="color:var(--emerald);" id="lv-today-fv">—</div>
+                <div class="lv-sub" id="lv-today-fv-sub">—</div>
+            </div>
+
+            <div class="lv-card">
+                <div class="lv-label">Expiry Fair Value</div>
+                <div class="lv-val" style="color:var(--violet);" id="lv-expiry-fv">—</div>
+                <div class="lv-sub" id="lv-expiry-fv-sub">—</div>
+            </div>
+
+            <!-- Row 2: Options structure -->
+            <div class="lv-card">
                 <div class="lv-label">Max Pain</div>
-                <div class="lv-val" style="color:var(--violet);" id="lv-maxpain">—</div>
+                <div class="lv-val" style="color:var(--rose);" id="lv-maxpain">—</div>
                 <div class="lv-sub" id="lv-pain-depth">—</div>
             </div>
 
@@ -588,8 +602,32 @@
     function renderLevels(d) {
         set('lv-spot', fmt(d.spot, 1));
         set('lv-spot-sig', d.spot_signal || '—');
-        set('lv-atm',  d.atm_strike ? fmt(d.atm_strike, 0) : '—');
+
+        set('lv-atm', d.atm_strike ? fmt(d.atm_strike, 0) : '—');
         set('lv-atm-sub', d.skew_shift != null ? `Skew: ${d.skew_shift >= 0 ? '+' : ''}${d.skew_shift} pts` : '—');
+
+        // Today's Fair Value — session anchor (avg of futures, synthetic, VWAP)
+        const tfv = d.today_fv, spot = d.spot;
+        set('lv-today-fv', tfv != null ? fmt(tfv, 1) : '—');
+        if (tfv != null && spot != null) {
+            const diff = spot - tfv;
+            const el = document.getElementById('lv-today-fv');
+            if (el) el.style.color = diff > 15 ? 'var(--rose)' : diff < -15 ? 'var(--emerald)' : 'var(--text-main)';
+            set('lv-today-fv-sub', diff > 15  ? `Spot +${fmt(diff,1)}pts above — rich`
+                                 : diff < -15 ? `Spot ${fmt(diff,1)}pts below — cheap`
+                                 :              `Spot near fair value`);
+        }
+
+        // Expiry Fair Value — settlement gravity anchor (Max Pain × 0.6 + OI mid × 0.4)
+        const efv = d.expiry_fv;
+        set('lv-expiry-fv', efv != null ? fmt(efv, 1) : '—');
+        if (efv != null && spot != null) {
+            const gap = efv - spot;
+            set('lv-expiry-fv-sub', gap > 0 ? `+${fmt(gap,1)}pts above spot — upside pull`
+                                  : gap < 0 ? `${fmt(gap,1)}pts below spot — downside pull`
+                                  :           `At spot — no expiry gravity`);
+        }
+
         set('lv-maxpain', fmt(d.max_pain, 0));
         set('lv-pain-depth', d.pain_depth != null ? `Depth: ${fmt(d.pain_depth, 2)}` : '—');
 
@@ -600,7 +638,7 @@
         set('lv-corridor', (d.put_support && d.call_resistance) ? `${fmt(d.put_support,0)} – ${fmt(d.call_resistance,0)}` : '—');
         set('lv-corridor-width', d.oi_corridor_width != null ? `Width: ${fmt(d.oi_corridor_width,0)} pts` : '—');
 
-        set('lv-pcr', fmt(d.pcr_oi, 2));
+        set('lv-pcr', d.pcr_oi != null ? fmt(d.pcr_oi, 2) : '—');
         const pcr = d.pcr_oi;
         set('lv-pcr-sub', pcr != null ? (pcr > 1.2 ? 'Put heavy — support' : pcr < 0.8 ? 'Call heavy — resistance' : 'Balanced') : '—');
     }
