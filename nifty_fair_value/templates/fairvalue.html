@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>NIFTY Options</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #020617;
+            --glass: rgba(15, 23, 42, 0.85);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --card-inner: rgba(2, 6, 23, 0.5);
+            --cyan: #22d3ee;    --cyan-bg:    rgba(34, 211, 238, 0.1);
+            --rose: #fb7185;    --rose-bg:    rgba(251, 113, 133, 0.1);
+            --violet: #a78bfa;  --violet-bg:  rgba(167, 139, 250, 0.1);
+            --amber: #fbbf24;   --amber-bg:   rgba(251, 191, 36, 0.1);
+            --emerald: #34d399; --emerald-bg: rgba(52, 211, 153, 0.1);
+            --text-main: #f1f5f9; --text-muted: #64748b;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            background-image: radial-gradient(circle at 50% 0%, #1e293b 0%, #020617 100%);
+            color: var(--text-main);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container { max-width: 1240px; margin: 0 auto; }
+
+        /* Header */
+        .header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 14px 20px;
+            background: var(--glass); backdrop-filter: blur(12px);
+            border-radius: 14px; border: 1px solid var(--glass-border);
+            margin-bottom: 16px; gap: 16px; flex-wrap: wrap;
+        }
+        .header-title { font-size: 18px; font-weight: 800; letter-spacing: -0.5px; }
+        .header-meta {
+            display: flex; align-items: center; gap: 20px;
+            font-size: 12px; color: var(--text-muted); font-weight: 600; flex-wrap: wrap;
+        }
+
+        /* Glass Panel */
+        .glass-panel {
+            background: var(--glass); backdrop-filter: blur(12px);
+            border-radius: 14px; border: 1px solid var(--glass-border);
+            padding: 20px; margin-bottom: 16px;
+        }
+
+        /* Section Title */
+        .section-title {
+            font-size: 10px; font-weight: 800; text-transform: uppercase;
+            letter-spacing: 1.5px; color: var(--text-muted);
+            margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+        }
+        .section-title::after { content: ""; height: 1px; flex: 1; background: var(--glass-border); }
+
+        /* ── Options Strategy Panel ────────────────────────────── */
+        .opt-main {
+            display: grid;
+            grid-template-columns: 240px 1fr 200px;
+            gap: 20px; align-items: start;
+        }
+        @media (max-width: 860px) { .opt-main { grid-template-columns: 1fr; } }
+
+        .opt-action-card {
+            border-radius: 16px; padding: 22px 24px;
+            border: 2px solid var(--glass-border);
+            display: flex; flex-direction: column; gap: 8px;
+        }
+        .opt-action-card.buy  { background: rgba(52,211,153,0.07);  border-color: rgba(52,211,153,0.35); }
+        .opt-action-card.sell { background: rgba(251,191,36,0.07);   border-color: rgba(251,191,36,0.35); }
+        .opt-action-card.none { background: rgba(100,116,139,0.07);  border-color: rgba(100,116,139,0.2); }
+
+        .opt-tag { font-size: 9px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); }
+        .opt-action-text { font-size: 26px; font-weight: 900; line-height: 1.05; letter-spacing: -0.5px; }
+        .opt-size { font-size: 11px; font-weight: 700; margin-top: 2px; }
+
+        .opt-numbers { display: flex; gap: 28px; align-items: flex-end; margin-bottom: 12px; flex-wrap: wrap; }
+        .opt-num-block { display: flex; flex-direction: column; gap: 2px; }
+        .opt-num-label { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); }
+        .opt-num-val { font-size: 30px; font-weight: 900; line-height: 1; letter-spacing: -1px; }
+        .opt-num-val.small { font-size: 20px; }
+        .opt-rationale { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+        .dte-warn {
+            background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);
+            border-radius: 8px; padding: 8px 12px; font-size: 11px;
+            color: #f87171; margin-top: 10px; line-height: 1.5;
+        }
+
+        /* IV panel */
+        .iv-panel { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+        .iv-badge {
+            display: inline-block; padding: 4px 12px; border-radius: 20px;
+            font-size: 10px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;
+        }
+        .iv-low      { background: rgba(52,211,153,0.15);  color: #34d399; border: 1px solid rgba(52,211,153,0.3); }
+        .iv-normal   { background: rgba(99,102,241,0.15);  color: #818cf8; border: 1px solid rgba(99,102,241,0.3); }
+        .iv-elevated { background: rgba(245,158,11,0.15);  color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+        .iv-high     { background: rgba(239,68,68,0.15);   color: #f87171; border: 1px solid rgba(239,68,68,0.3);  }
+        .iv-unknown  { background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid rgba(107,114,128,0.3);}
+
+        /* ── LS Factor Panel ────────────────────────────────────── */
+        .ls-panel { display: grid; grid-template-columns: auto 1fr auto; gap: 24px; align-items: center; }
+        @media (max-width: 800px) { .ls-panel { grid-template-columns: 1fr; } }
+
+        .ls-hero { display: flex; flex-direction: column; gap: 4px; }
+        .ls-tag { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); }
+        .ls-value { font-size: 56px; font-weight: 900; line-height: 1; letter-spacing: -2px; }
+        .ls-gap-line { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+        .decision-card {
+            background: var(--card-inner); border-radius: 12px;
+            border: 1px solid var(--glass-border);
+            padding: 16px 20px; display: flex; flex-direction: column; gap: 6px;
+        }
+        .decision-action { font-size: 20px; font-weight: 800; line-height: 1; letter-spacing: -0.5px; }
+        .decision-detail { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+        .dec-strong   .decision-action { color: var(--emerald); }
+        .dec-strong   { border-color: rgba(52,211,153,0.3); background: rgba(52,211,153,0.04); }
+        .dec-moderate .decision-action { color: var(--cyan); }
+        .dec-moderate { border-color: rgba(34,211,238,0.3); }
+        .dec-wait     .decision-action { color: var(--amber); }
+        .dec-wait     { border-color: rgba(251,191,36,0.3); background: rgba(251,191,36,0.03); }
+        .dec-watch    .decision-action { color: var(--violet); }
+        .dec-watch    { border-color: rgba(167,139,250,0.3); }
+        .dec-skip     .decision-action { color: var(--rose); }
+        .dec-skip     { border-color: rgba(251,113,133,0.2); }
+        .dec-neutral  .decision-action { color: var(--text-muted); }
+
+        /* Confidence */
+        .conf-panel { display: flex; flex-direction: column; gap: 10px; }
+        .conf-score-row { display: flex; align-items: baseline; gap: 8px; }
+        .conf-number { font-size: 36px; font-weight: 900; line-height: 1; }
+        .conf-denom  { font-size: 14px; color: var(--text-muted); font-weight: 700; }
+        .conf-level-badge { padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: 800; }
+        .conf-HIGH   { background: var(--emerald-bg); color: var(--emerald); }
+        .conf-MEDIUM { background: var(--amber-bg);   color: var(--amber); }
+        .conf-LOW    { background: rgba(100,116,139,0.1); color: var(--text-muted); }
+        .check-list  { display: flex; flex-direction: column; gap: 5px; }
+        .check-item  { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-muted); }
+        .check-dot   { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .check-on    { background: var(--emerald); box-shadow: 0 0 6px var(--emerald); }
+        .check-off   { background: rgba(100,116,139,0.3); }
+
+        /* ── Gap Strip ──────────────────────────────────────────── */
+        .gap-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+        @media (max-width: 700px) { .gap-strip { grid-template-columns: 1fr; } }
+        .gap-card {
+            background: var(--card-inner); border-radius: 10px;
+            border: 1px solid var(--glass-border); padding: 12px 14px;
+        }
+        .gap-card-label { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 1px; }
+        .gap-card-full  { font-size: 10px; color: var(--text-muted); margin-bottom: 4px; }
+        .gap-card-val   { font-size: 22px; font-weight: 800; line-height: 1; }
+        .gap-card-interp { font-size: 10px; color: var(--text-muted); line-height: 1.4; margin-top: 4px; }
+
+        /* ── Key Levels Strip ───────────────────────────────────── */
+        .levels-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+        @media (max-width: 900px) { .levels-strip { grid-template-columns: repeat(3, 1fr); } }
+        @media (max-width: 500px) { .levels-strip { grid-template-columns: repeat(2, 1fr); } }
+        .lv-card {
+            background: var(--card-inner); border-radius: 10px;
+            border: 1px solid var(--glass-border); padding: 12px 14px;
+        }
+        .lv-label { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 4px; }
+        .lv-val   { font-size: 20px; font-weight: 800; line-height: 1; }
+        .lv-sub   { font-size: 10px; color: var(--text-muted); margin-top: 3px; }
+
+        /* ── Option Chain ───────────────────────────────────────── */
+        .chain-table { width: 100%; border-collapse: collapse; }
+        .chain-table th {
+            font-size: 9px; font-weight: 800; color: var(--text-muted); text-transform: uppercase;
+            padding: 10px 12px; background: rgba(15,23,42,0.5);
+            border-bottom: 1px solid var(--glass-border);
+        }
+        .chain-table td { padding: 0; height: 48px; border-bottom: 1px solid rgba(255,255,255,0.03); position: relative; }
+        .strike-cell { width: 90px; text-align: center; font-weight: 800; font-size: 13px; background: rgba(15,23,42,0.7); color: var(--cyan); }
+        .strike-cell.atm { color: #fff; box-shadow: inset 0 0 15px rgba(34,211,238,0.12); }
+        .oi-bar-container { width: 100%; height: 100%; display: flex; align-items: center; padding: 0 12px; position: relative; }
+        .bar { position: absolute; top: 8px; bottom: 8px; border-radius: 3px; opacity: 0.15; transition: width 0.4s ease; }
+        .call-bar { right: 0; background: var(--rose);  border-right: 2px solid var(--rose); }
+        .put-bar  { left: 0;  background: var(--cyan);  border-left:  2px solid var(--cyan); }
+        .itm-layer { position: absolute; inset: 0; pointer-events: none; opacity: 0.04; }
+        .itm-call  { background: var(--rose); }
+        .itm-put   { background: var(--cyan); }
+        .p-ltp { font-weight: 700; font-size: 13px; z-index: 5; position: relative; }
+
+        /* Status */
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+        .status-Connected    { background: var(--emerald); box-shadow: 0 0 8px var(--emerald); }
+        .status-Initializing, .status-Refreshing, .status-Authenticating { background: var(--amber); }
+        .status-Disconnected, .status-Reconnecting { background: var(--rose); box-shadow: 0 0 8px var(--rose); }
+        .error-banner {
+            position: sticky; top: 0; z-index: 100;
+            background: var(--rose-bg); color: var(--rose);
+            border-bottom: 1px solid rgba(251,113,133,0.4);
+            padding: 10px 20px; font-size: 11px; font-weight: 700;
+            display: none; align-items: center; justify-content: center; gap: 12px;
+            backdrop-filter: blur(10px);
+        }
+        .error-banner.visible { display: flex; }
+        .stale-warning { color: var(--amber); font-weight: 800; border: 1px solid var(--amber); padding: 2px 6px; border-radius: 4px; font-size: 9px; }
+    </style>
+</head>
+<body>
+<div id="status-banner" class="error-banner">
+    <span class="stale-warning">OFFLINE / STALE DATA</span>
+    <span id="banner-error">Connecting to Groww API...</span>
+</div>
+<div class="container">
+
+    <!-- ── Header ───────────────────────────────────────────── -->
+    <header class="header" style="margin-bottom:16px;">
+        <div class="header-title">NIFTY OPTIONS</div>
+        <div class="header-meta">
+            <div id="poll-status-pill" style="color:#fff; display:flex; align-items:center;">
+                <span id="status-dot" class="status-dot status-Initializing"></span>
+                <span id="status-text">INITIALIZING</span>
+            </div>
+            <div>OPT EXP: <b id="expiry-date">—</b></div>
+            <div>FUT EXP: <b id="fut-expiry-date">—</b></div>
+            <div id="last-update" style="opacity:0.5">—</div>
+        </div>
+    </header>
+
+    <!-- ── 1. Options Strategy ───────────────────────────────── -->
+    <div class="glass-panel">
+        <div class="section-title">Options Strategy</div>
+        <div class="opt-main">
+
+            <!-- Action card -->
+            <div class="opt-action-card none" id="opt-action-card">
+                <div class="opt-tag">Strategy</div>
+                <div class="opt-action-text" id="opt-strategy-action">—</div>
+                <div class="opt-size" id="opt-size-note" style="color:var(--text-muted);">—</div>
+            </div>
+
+            <!-- Numbers + rationale -->
+            <div>
+                <div class="opt-numbers">
+                    <div class="opt-num-block">
+                        <div class="opt-num-label">Strike</div>
+                        <div class="opt-num-val" id="opt-strike">—</div>
+                    </div>
+                    <div class="opt-num-block">
+                        <div class="opt-num-label">Premium</div>
+                        <div class="opt-num-val small" id="opt-premium">—</div>
+                    </div>
+                    <div class="opt-num-block">
+                        <div class="opt-num-label">Max Loss / Lot</div>
+                        <div class="opt-num-val small" style="color:var(--rose);" id="opt-maxloss">—</div>
+                    </div>
+                </div>
+                <div class="opt-rationale" id="opt-rationale">Waiting for data...</div>
+                <div id="opt-dte-warn"></div>
+            </div>
+
+            <!-- IV context -->
+            <div class="iv-panel">
+                <div class="opt-tag" style="margin-bottom:4px;">IV Regime</div>
+                <span class="iv-badge iv-unknown" id="opt-iv-badge">—</span>
+                <div style="font-size:28px; font-weight:900; margin-top:8px;" id="opt-iv-val">—</div>
+                <div style="font-size:10px; color:var(--text-muted);">ATM IV %</div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ── 2. LS Factor Decision ─────────────────────────────── -->
+    <div class="glass-panel">
+        <div class="section-title">LS Signal — (Expiry Fair − Spot) ÷ <span id="ls-denominator">Straddle</span></div>
+        <div class="ls-panel">
+
+            <!-- LS value -->
+            <div class="ls-hero">
+                <div class="ls-tag">LS Factor</div>
+                <div class="ls-value" id="ls-value">—</div>
+                <div class="ls-gap-line">
+                    Gap: <span id="ls-gap" style="font-weight:700;">—</span>
+                </div>
+                <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">
+                    <span id="ls-expiry-fair">—</span> − <span id="ls-spot">—</span>
+                </div>
+            </div>
+
+            <!-- Decision card -->
+            <div id="decision-card" class="decision-card dec-neutral">
+                <div class="ls-tag">Decision</div>
+                <div class="decision-action" id="decision-action">WAITING FOR DATA</div>
+                <div class="decision-detail" id="decision-detail">Connecting to market feed...</div>
+            </div>
+
+            <!-- Confidence -->
+            <div class="conf-panel">
+                <div class="conf-score-row">
+                    <div class="conf-number" id="conf-score">—</div>
+                    <div class="conf-denom">/5</div>
+                    <div id="conf-level-badge" class="conf-level-badge conf-LOW">LOW</div>
+                </div>
+                <div class="ls-tag">Confidence checks</div>
+                <div class="check-list">
+                    <div class="check-item"><div class="check-dot check-off" id="chk-futures"></div><span>Futures bias aligned</span></div>
+                    <div class="check-item"><div class="check-dot check-off" id="chk-magnet"></div><span>Strong pain magnet (&gt;1.5)</span></div>
+                    <div class="check-item"><div class="check-dot check-off" id="chk-intraday"></div><span>Intraday gap aligned</span></div>
+                    <div class="check-item"><div class="check-dot check-off" id="chk-corridor"></div><span>Spot inside OI corridor</span></div>
+                    <div class="check-item"><div class="check-dot check-off" id="chk-pcr"></div><span>PCR aligned</span></div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ── 3. Gap Strip ──────────────────────────────────────── -->
+    <div class="glass-panel" style="padding:16px 20px;">
+        <div class="section-title">Session Gaps</div>
+        <div class="gap-strip">
+
+            <div class="gap-card">
+                <div class="gap-card-label" style="color:var(--cyan)">IG — Intraday Gap</div>
+                <div class="gap-card-full">Spot − Theoretical Price</div>
+                <div class="gap-card-val c-cyan" id="intraday-gap" style="color:var(--cyan);">—</div>
+                <div class="gap-card-interp" id="ig-interp">—</div>
+            </div>
+
+            <div class="gap-card">
+                <div class="gap-card-label" style="color:var(--violet)">EG — Expiry Gap</div>
+                <div class="gap-card-full">Spot − Max Pain</div>
+                <div class="gap-card-val" id="expiry-gap" style="color:var(--violet);">—</div>
+                <div class="gap-card-interp" id="eg-interp">—</div>
+            </div>
+
+            <div class="gap-card">
+                <div class="gap-card-label" style="color:var(--amber)">AG — Alignment Gap</div>
+                <div class="gap-card-full">Theoretical Price − Max Pain</div>
+                <div class="gap-card-val" id="align-gap" style="color:var(--amber);">—</div>
+                <div class="gap-card-interp" id="ag-interp">—</div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ── 4. Key Levels ─────────────────────────────────────── -->
+    <div class="glass-panel" style="padding:16px 20px;">
+        <div class="section-title">Key Levels</div>
+        <div class="levels-strip">
+
+            <div class="lv-card">
+                <div class="lv-label">Spot</div>
+                <div class="lv-val" id="lv-spot">—</div>
+                <div class="lv-sub" id="lv-spot-sig">—</div>
+            </div>
+
+            <div class="lv-card">
+                <div class="lv-label">True ATM</div>
+                <div class="lv-val" style="color:var(--cyan);" id="lv-atm">—</div>
+                <div class="lv-sub" id="lv-atm-sub">—</div>
+            </div>
+
+            <div class="lv-card">
+                <div class="lv-label">Max Pain</div>
+                <div class="lv-val" style="color:var(--violet);" id="lv-maxpain">—</div>
+                <div class="lv-sub" id="lv-pain-depth">—</div>
+            </div>
+
+            <div class="lv-card">
+                <div class="lv-label">Straddle Range</div>
+                <div class="lv-val" style="font-size:14px; color:var(--amber);" id="lv-straddle-range">—</div>
+                <div class="lv-sub" id="lv-straddle-val">—</div>
+            </div>
+
+            <div class="lv-card">
+                <div class="lv-label">OI Corridor</div>
+                <div class="lv-val" style="font-size:14px;" id="lv-corridor">—</div>
+                <div class="lv-sub" id="lv-corridor-width">—</div>
+            </div>
+
+            <div class="lv-card">
+                <div class="lv-label">PCR (OI)</div>
+                <div class="lv-val" id="lv-pcr">—</div>
+                <div class="lv-sub" id="lv-pcr-sub">—</div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ── 5. Option Chain ───────────────────────────────────── -->
+    <div class="glass-panel" style="padding:0; overflow:hidden; margin-bottom:0;">
+        <div style="padding:16px 20px 8px;">
+            <div class="section-title" style="margin-bottom:0;">Visual Option Chain — ATM ±3</div>
+        </div>
+        <table class="chain-table">
+            <thead>
+                <tr>
+                    <th style="text-align:right;">Call OI</th>
+                    <th style="text-align:right; width:75px;">Call LTP</th>
+                    <th>Strike</th>
+                    <th style="text-align:left; width:75px;">Put LTP</th>
+                    <th style="text-align:left;">Put OI</th>
+                </tr>
+            </thead>
+            <tbody id="chain-body"></tbody>
+        </table>
+    </div>
+
+</div>
+<script>
+    const fmt  = (v, d=2) => v == null ? "—" : Number(v).toLocaleString('en-IN', {minimumFractionDigits:d, maximumFractionDigits:d});
+    const fmtS = (v, d=1) => v == null ? "—" : (v >= 0 ? "+" : "") + fmt(Math.abs(v), d) + " pts";
+
+    function set(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }
+
+    // ── Options Strategy ────────────────────────────────────────
+    function renderOptionsStrategy(s) {
+        if (!s) return;
+
+        const card = document.getElementById('opt-action-card');
+        if (card) {
+            const isNone = s.strategy === 'NO TRADE';
+            const isSell = s.strategy && s.strategy.startsWith('SELL');
+            card.className = 'opt-action-card ' + (isNone ? 'none' : isSell ? 'sell' : 'buy');
+        }
+        const actionEl = document.getElementById('opt-strategy-action');
+        if (actionEl) {
+            const isNone = s.strategy === 'NO TRADE';
+            const isSell = s.strategy && s.strategy.startsWith('SELL');
+            actionEl.textContent = s.strategy || '—';
+            actionEl.style.color = isNone ? 'var(--text-muted)' : isSell ? 'var(--amber)' : 'var(--emerald)';
+        }
+        const sizeEl = document.getElementById('opt-size-note');
+        if (sizeEl) {
+            sizeEl.textContent  = (s.size_note && s.size_note !== 'SKIP') ? s.size_note : '';
+            sizeEl.style.color  = s.size_note === 'FULL SIZE' ? 'var(--emerald)' :
+                                   s.size_note === 'REDUCED SIZE' ? 'var(--amber)' : 'var(--text-muted)';
+        }
+
+        set('opt-strike',  s.strike  != null ? fmt(s.strike,  0) : '—');
+        set('opt-premium', s.premium != null ? '₹ ' + fmt(s.premium, 2) : '—');
+        set('opt-maxloss', s.max_loss_lot != null ? '₹ ' + fmt(s.max_loss_lot, 0) : '—');
+        set('opt-rationale', s.rationale || '');
+
+        const warnEl = document.getElementById('opt-dte-warn');
+        if (warnEl) warnEl.innerHTML = s.dte_warning ? `<div class="dte-warn">⚠ ${s.dte_warning}</div>` : '';
+
+        const ivBadge = document.getElementById('opt-iv-badge');
+        if (ivBadge) {
+            const reg = (s.iv_regime || 'UNKNOWN').toLowerCase();
+            ivBadge.textContent = s.iv_regime || '—';
+            ivBadge.className = `iv-badge iv-${reg}`;
+        }
+        const ivVal = document.getElementById('opt-iv-val');
+        if (ivVal) {
+            ivVal.textContent = s.iv_value != null ? fmt(s.iv_value, 1) + '%' : '—';
+            const reg = s.iv_regime || '';
+            ivVal.style.color = reg === 'LOW' ? 'var(--emerald)' : reg === 'ELEVATED' ? 'var(--amber)' : reg === 'HIGH' ? 'var(--rose)' : 'var(--text-main)';
+        }
+    }
+
+    // ── LS Factor ────────────────────────────────────────────────
+    const DIR_COLOR = {
+        'LONG': 'var(--emerald)', 'WEAK LONG': 'var(--emerald)',
+        'SHORT': 'var(--rose)',   'WEAK SHORT': 'var(--rose)', 'FLAT': 'var(--text-muted)'
+    };
+    const DEC_STYLE = {
+        'strong':'dec-strong','moderate':'dec-moderate','wait':'dec-wait',
+        'watch':'dec-watch',  'skip':'dec-skip',        'neutral':'dec-neutral'
+    };
+
+    function renderLS(d) {
+        const ls   = d.ls_factor;
+        const conf = d.ls_confidence || {};
+        const dec  = d.ls_decision   || {};
+        const dir  = conf.direction  || 'FLAT';
+
+        const lsEl = document.getElementById('ls-value');
+        if (lsEl) {
+            lsEl.textContent = ls != null ? (ls >= 0 ? '+' : '') + ls.toFixed(4) : '—';
+            lsEl.style.color = DIR_COLOR[dir] || 'var(--text-muted)';
+        }
+
+        const straddle = d.straddle_value;
+        set('ls-denominator', (straddle && straddle > 20) ? fmt(straddle, 1) + ' (Straddle)' : '200');
+
+        const expFair = d.expiry_fair, spot = d.spot;
+        set('ls-expiry-fair', expFair != null ? fmt(expFair, 1) : '—');
+        set('ls-spot', spot != null ? fmt(spot, 1) : '—');
+        const gapEl = document.getElementById('ls-gap');
+        if (gapEl && expFair != null && spot != null) {
+            const gap = expFair - spot;
+            gapEl.textContent = (gap >= 0 ? '+' : '') + fmt(Math.abs(gap), 1) + ' pts';
+            gapEl.style.color = gap >= 0 ? 'var(--emerald)' : 'var(--rose)';
+        }
+
+        const card = document.getElementById('decision-card');
+        if (card) card.className = 'decision-card ' + (DEC_STYLE[dec.style || 'neutral'] || 'dec-neutral');
+        set('decision-action', dec.action || '—');
+        set('decision-detail', dec.detail || '—');
+
+        set('conf-score', conf.score != null ? conf.score : '—');
+        const lvlBadge = document.getElementById('conf-level-badge');
+        if (lvlBadge) { lvlBadge.textContent = conf.level || 'LOW'; lvlBadge.className = 'conf-level-badge conf-' + (conf.level || 'LOW'); }
+
+        const checks = conf.checks || {};
+        const dotMap = {
+            'chk-futures': checks.futures_bias, 'chk-magnet': checks.strong_magnet,
+            'chk-intraday': checks.intraday_aligned, 'chk-corridor': checks.in_oi_corridor,
+            'chk-pcr': checks.pcr_aligned,
+        };
+        for (const [id, val] of Object.entries(dotMap)) {
+            const el = document.getElementById(id);
+            if (el) el.className = 'check-dot ' + (val ? 'check-on' : 'check-off');
+        }
+    }
+
+    // ── Gap Strip ────────────────────────────────────────────────
+    function renderGaps(d) {
+        const ig = d.intraday_gap, eg = d.expiry_gap, ag = d.alignment_gap;
+        set('intraday-gap', fmtS(ig));
+        set('expiry-gap',   fmtS(eg));
+        set('align-gap',    fmtS(ag));
+
+        set('ig-interp', ig == null ? '—'
+            : ig >  20 ? `Spot ${fmt(ig,1)}pts above theoretical — rich, mean-reversion risk`
+            : ig < -20 ? `Spot ${fmt(Math.abs(ig),1)}pts below theoretical — cheap, upside pull`
+            :            `Within ±20pts of theoretical — no session mispricing`);
+
+        set('eg-interp', eg == null ? '—'
+            : eg >  50 ? `${fmt(eg,1)}pts above max pain — gravitational pull toward ${fmt(d.max_pain,0)}`
+            : eg < -50 ? `${fmt(Math.abs(eg),1)}pts below max pain — pull up toward ${fmt(d.max_pain,0)}`
+            :            `Within ±50pts of max pain — equilibrium zone`);
+
+        set('ag-interp', ag == null ? '—'
+            : ag >  80 ? `Session fair ${fmt(ag,1)}pts above expiry anchor — trending day`
+            : ag < -80 ? `Session fair ${fmt(Math.abs(ag),1)}pts below expiry anchor — trending day`
+            :            `Session and expiry fairs aligned — mean-reverting`);
+    }
+
+    // ── Key Levels ───────────────────────────────────────────────
+    function renderLevels(d) {
+        set('lv-spot', fmt(d.spot, 1));
+        set('lv-spot-sig', d.spot_signal || '—');
+        set('lv-atm',  d.atm_strike ? fmt(d.atm_strike, 0) : '—');
+        set('lv-atm-sub', d.skew_shift != null ? `Skew: ${d.skew_shift >= 0 ? '+' : ''}${d.skew_shift} pts` : '—');
+        set('lv-maxpain', fmt(d.max_pain, 0));
+        set('lv-pain-depth', d.pain_depth != null ? `Depth: ${fmt(d.pain_depth, 2)}` : '—');
+
+        const sl = d.straddle_lower, su = d.straddle_upper;
+        set('lv-straddle-range', (sl != null && su != null) ? `${fmt(sl,0)} – ${fmt(su,0)}` : '—');
+        set('lv-straddle-val', d.straddle_value != null ? `±${fmt(d.straddle_value,1)} pts` : '—');
+
+        set('lv-corridor', (d.put_support && d.call_resistance) ? `${fmt(d.put_support,0)} – ${fmt(d.call_resistance,0)}` : '—');
+        set('lv-corridor-width', d.oi_corridor_width != null ? `Width: ${fmt(d.oi_corridor_width,0)} pts` : '—');
+
+        set('lv-pcr', fmt(d.pcr_oi, 2));
+        const pcr = d.pcr_oi;
+        set('lv-pcr-sub', pcr != null ? (pcr > 1.2 ? 'Put heavy — support' : pcr < 0.8 ? 'Call heavy — resistance' : 'Balanced') : '—');
+    }
+
+    // ── Option Chain ─────────────────────────────────────────────
+    function updateChain(data, spot, atm) {
+        const body = document.getElementById('chain-body');
+        if (!body) return;
+        const maxOi = Math.max(...data.map(o => Math.max(o.call_oi, o.put_oi)));
+        let html = '';
+        data.forEach(o => {
+            const cPct = (o.call_oi / maxOi) * 100;
+            const pPct = (o.put_oi  / maxOi) * 100;
+            const isAtm = o.strike === atm;
+            html += `<tr>
+                <td><div class="itm-layer ${o.strike < spot ? 'itm-call' : ''}"></div>
+                    <div class="oi-bar-container" style="justify-content:flex-end; text-align:right;">
+                        <div class="bar call-bar" style="width:${cPct}%"></div>
+                        <span style="font-size:10px; color:var(--rose); z-index:5;">${fmt(o.call_oi/100000,1)}L</span>
+                    </div></td>
+                <td style="text-align:right; padding-right:10px;"><span class="p-ltp">${fmt(o.call_ltp,1)}</span></td>
+                <td class="strike-cell ${isAtm?'atm':''}">${o.strike}</td>
+                <td style="text-align:left; padding-left:10px;"><span class="p-ltp">${fmt(o.put_ltp,1)}</span></td>
+                <td><div class="itm-layer ${o.strike > spot ? 'itm-put' : ''}"></div>
+                    <div class="oi-bar-container">
+                        <div class="bar put-bar" style="width:${pPct}%"></div>
+                        <span style="font-size:10px; color:var(--cyan); z-index:5;">${fmt(o.put_oi/100000,1)}L</span>
+                    </div></td>
+            </tr>`;
+        });
+        body.innerHTML = html;
+    }
+
+    // ── Main render ──────────────────────────────────────────────
+    function render(d) {
+        if (!d) return;
+
+        // Status
+        const statusText = d.poll_status || "Unknown";
+        set('status-text', statusText.toUpperCase());
+        const dot = document.getElementById('status-dot');
+        if (dot) dot.className = 'status-dot status-' + (statusText.includes("Connected") ? "Connected" : statusText.split(' ')[0]);
+
+        const banner = document.getElementById('status-banner');
+        if (d.is_stale || d.poll_status !== "Connected") {
+            banner.classList.add('visible');
+            document.getElementById('banner-error').textContent = d.error_msg || `Status: ${statusText}`;
+        } else {
+            banner.classList.remove('visible');
+        }
+
+        set('expiry-date',     d.expiry        ? `${d.expiry} (${d.opt_dte}d)` : '—');
+        set('fut-expiry-date', d.futures_expiry ? `${d.futures_expiry} (${d.fut_dte}d)` : '—');
+        set('last-update',     d.ts ? (d.is_stale ? 'STALE · ' : 'LIVE · ') + new Date(d.ts * 1000).toLocaleTimeString() : '—');
+
+        renderOptionsStrategy(d.options_strategy);
+        renderLS(d);
+        renderGaps(d);
+        renderLevels(d);
+        if (d.chart_data) updateChain(d.chart_data, d.spot, d.atm_strike);
+    }
+
+    async function poll() {
+        try {
+            const res  = await fetch('/api/data');
+            const data = await res.json();
+            render(data);
+        } catch (e) {
+            console.error('Poll failed', e);
+            document.getElementById('status-banner').classList.add('visible');
+            document.getElementById('banner-error').textContent = 'Dashboard offline: Backend unreachable.';
+            const dot = document.getElementById('status-dot');
+            const txt = document.getElementById('status-text');
+            if (dot) dot.className = 'status-dot status-Disconnected';
+            if (txt) txt.textContent = 'OFFLINE';
+        }
+        setTimeout(poll, 5000);
+    }
+
+    document.addEventListener('DOMContentLoaded', poll);
+</script>
+</body>
+</html>

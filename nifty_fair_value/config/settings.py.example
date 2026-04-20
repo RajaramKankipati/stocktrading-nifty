@@ -1,0 +1,15 @@
+import os
+
+# API Configuration — copy this file to settings.py and fill in your credentials
+# Get these from the Groww Trade API developer portal.
+TOTP_TOKEN  = "your-groww-api-key-here"
+TOTP_SECRET = "your-totp-secret-here"
+
+# Trading Configuration
+UNDERLYING = "NIFTY"
+LOT_SIZE   = 65       # Current Nifty lot size (update when SEBI changes it)
+RISK_FREE_RATE = 0.07
+
+# Market Timings (Decimal hours IST)
+MARKET_OPEN  = 9.25   # 9:15 AM
+MARKET_CLOSE = 15.5   # 3:30 PM
