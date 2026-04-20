@@ -550,7 +550,7 @@
         const straddle = d.straddle_value;
         set('ls-denominator', (straddle && straddle > 20) ? fmt(straddle, 1) + ' (Straddle)' : '200');
 
-        const expFair = d.expiry_fair, spot = d.spot;
+        const expFair = d.expiry_fv, spot = d.spot;
         set('ls-expiry-fair', expFair != null ? fmt(expFair, 1) : '—');
         set('ls-spot', spot != null ? fmt(spot, 1) : '—');
         const gapEl = document.getElementById('ls-gap');
