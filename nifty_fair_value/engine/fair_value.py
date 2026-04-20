@@ -152,21 +152,15 @@ def expiry_fair(call_oi_level, put_oi_level, max_pain):
     """
     Expiry Fair Value scalar used for LS Factor computation.
 
-    FIX: ATM strike removed. It is approximately equal to spot by definition and
-    systematically dampened LS by ~33% (pulled expiry_fair toward spot).
-
-    Max Pain is the settlement anchor (60% weight) — this is where option writer
-    losses are minimised and where price gravitates on expiry day.
-    OI midpoint (40%) adds the structural support/resistance layer.
-
-    If either OI level is missing, falls back to max_pain alone.
+    Per PRD §7.5, Max Pain is the sole expiry gravity anchor — the three
+    measures (Max Pain, OI Levels, Straddle) are kept separate in the structured
+    expiry_fair_value() output. The previous composite (max_pain×0.6 + oi_mid×0.4)
+    introduced systematic downside bias: Nifty's structural put skew always pulls
+    the OI centroid well below spot, making LS persistently negative.
     """
     if not max_pain:
         return 0.0
-    if not call_oi_level or not put_oi_level:
-        return round(max_pain, 2)
-    oi_mid = (call_oi_level + put_oi_level) / 2
-    return round(max_pain * 0.6 + oi_mid * 0.4, 2)
+    return round(float(max_pain), 2)
 
 
 def ls_factor(expiry_fv, spot, straddle_value=None):
