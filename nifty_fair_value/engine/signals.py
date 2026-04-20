@@ -98,8 +98,10 @@ def generate_execution_setup(market_data, today_fv, expiry_fv, theoretical_price
         })
         return setup
 
-    # 5. Fallback signals (Keeping legacy signal logic for the badge)
-    if spot > today_fv: setup["signal"] = "BULLISH"
-    elif spot < today_fv: setup["signal"] = "BEARISH"
-    
+    # 5. Fallback: directional bias badge only, no active setup
+    if spot > today_fv:
+        setup["signal"] = "BULLISH"
+    elif spot < today_fv:
+        setup["signal"] = "BEARISH"
+
     return setup
