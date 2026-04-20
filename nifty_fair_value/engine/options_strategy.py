@@ -100,15 +100,17 @@ def options_strategy(ls, ls_conf, atm_iv, opt_dte, options, atm_strike, spot, lo
     # ── Expiry day logic ────────────────────────────────────────────────────
     if opt_dte == 0:
         if side and abs_ls > 0.35 and score >= 3 and iv_reg in ('ELEVATED', 'HIGH'):
-            # Selling against the direction on expiry: e.g. spot above max pain → sell CE
-            sell_side  = 'PE' if is_long else 'CE'   # sell the side pointing wrong
-            opt        = _find_strike(options, atm_strike, sell_side, 0)
+            # Sell the side gravity is pulling away from: LONG gravity → sell PE, SHORT gravity → sell CE.
+            # Use 1-OTM (offset=1) rather than ATM — expiry-day gamma at ATM is extreme,
+            # 1-OTM gives defined, lower-gamma exposure while still collecting meaningful credit.
+            sell_side  = 'PE' if is_long else 'CE'
+            opt        = _find_strike(options, atm_strike, sell_side, 1)
             prem       = opt.call_ltp if sell_side == 'CE' else opt.put_ltp
             return _result(
-                f'SELL {sell_side} — ATM (Expiry)', sell_side, opt.strike, prem,
+                f'SELL {sell_side} — 1-OTM (Expiry)', sell_side, opt.strike, prem,
                 _max_loss(prem, ls_lot), 'REDUCED',
                 iv_reg, atm_iv,
-                f'Expiry day — selling premium at {opt.strike} (IV {atm_iv:.1f}%, gravity {direction})',
+                f'Expiry day — selling 1-OTM at {opt.strike} (IV {atm_iv:.1f}%, gravity {direction})',
                 dte_warning, 'sell'
             )
         return _result(
