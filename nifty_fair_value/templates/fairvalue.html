@@ -243,7 +243,8 @@
 
             <!-- Numbers + rationale -->
             <div>
-                <div class="opt-numbers">
+                <!-- Directional trade: Strike / Premium / Max Loss -->
+                <div class="opt-numbers" id="opt-numbers-directional">
                     <div class="opt-num-block">
                         <div class="opt-num-label">Strike</div>
                         <div class="opt-num-val" id="opt-strike">—</div>
@@ -255,6 +256,33 @@
                     <div class="opt-num-block">
                         <div class="opt-num-label">Max Loss / Lot</div>
                         <div class="opt-num-val small" style="color:var(--rose);" id="opt-maxloss">—</div>
+                    </div>
+                </div>
+                <!-- Straddle: both legs + credit + breakevens -->
+                <div class="opt-numbers" id="opt-numbers-straddle" style="display:none; flex-wrap:wrap; row-gap:12px;">
+                    <div class="opt-num-block">
+                        <div class="opt-num-label">Strike (Both Legs)</div>
+                        <div class="opt-num-val" id="opt-straddle-strike">—</div>
+                    </div>
+                    <div class="opt-num-block">
+                        <div class="opt-num-label">CE Leg (Sell)</div>
+                        <div class="opt-num-val small" style="color:var(--rose);" id="opt-ce-prem">—</div>
+                    </div>
+                    <div class="opt-num-block">
+                        <div class="opt-num-label">PE Leg (Sell)</div>
+                        <div class="opt-num-val small" style="color:var(--cyan);" id="opt-pe-prem">—</div>
+                    </div>
+                    <div class="opt-num-block">
+                        <div class="opt-num-label">Max Profit / Lot</div>
+                        <div class="opt-num-val small" style="color:var(--emerald);" id="opt-credit-lot">—</div>
+                    </div>
+                    <div class="opt-num-block">
+                        <div class="opt-num-label">Upper Breakeven</div>
+                        <div class="opt-num-val small" style="color:var(--amber);" id="opt-be-upper">—</div>
+                    </div>
+                    <div class="opt-num-block">
+                        <div class="opt-num-label">Lower Breakeven</div>
+                        <div class="opt-num-val small" style="color:var(--amber);" id="opt-be-lower">—</div>
                     </div>
                 </div>
                 <div class="opt-rationale" id="opt-rationale">Waiting for data...</div>
@@ -439,9 +467,25 @@
                                    s.size_note === 'REDUCED SIZE' ? 'var(--amber)' : 'var(--text-muted)';
         }
 
-        set('opt-strike',  s.strike  != null ? fmt(s.strike,  0) : '—');
-        set('opt-premium', s.premium != null ? '₹ ' + fmt(s.premium, 2) : '—');
-        set('opt-maxloss', s.max_loss_lot != null ? '₹ ' + fmt(s.max_loss_lot, 0) : '—');
+        const isStraddle = s.side === 'STRADDLE';
+        const dirEl  = document.getElementById('opt-numbers-directional');
+        const strEl  = document.getElementById('opt-numbers-straddle');
+        if (dirEl) dirEl.style.display = isStraddle ? 'none' : 'flex';
+        if (strEl) strEl.style.display = isStraddle ? 'flex' : 'none';
+
+        if (isStraddle) {
+            set('opt-straddle-strike', s.strike       != null ? fmt(s.strike, 0)          : '—');
+            set('opt-ce-prem',         s.ce_premium   != null ? '₹ ' + fmt(s.ce_premium, 2)   : '—');
+            set('opt-pe-prem',         s.pe_premium   != null ? '₹ ' + fmt(s.pe_premium, 2)   : '—');
+            set('opt-credit-lot',      s.max_profit_lot != null ? '₹ ' + fmt(s.max_profit_lot, 0) : '—');
+            set('opt-be-upper',        s.breakeven_upper != null ? fmt(s.breakeven_upper, 1)  : '—');
+            set('opt-be-lower',        s.breakeven_lower != null ? fmt(s.breakeven_lower, 1)  : '—');
+        } else {
+            set('opt-strike',  s.strike       != null ? fmt(s.strike, 0)              : '—');
+            set('opt-premium', s.premium      != null ? '₹ ' + fmt(s.premium, 2)      : '—');
+            set('opt-maxloss', s.max_loss_lot != null ? '₹ ' + fmt(s.max_loss_lot, 0) : '—');
+        }
+
         set('opt-rationale', s.rationale || '');
 
         const warnEl = document.getElementById('opt-dte-warn');

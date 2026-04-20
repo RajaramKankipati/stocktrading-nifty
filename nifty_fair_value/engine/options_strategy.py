@@ -122,14 +122,20 @@ def options_strategy(ls, ls_conf, atm_iv, opt_dte, options, atm_strike, spot, lo
             opt      = _find_strike(options, atm_strike, 'CE', 0)
             ce_prem  = opt.call_ltp
             pe_prem  = opt.put_ltp
-            combined = round((ce_prem + pe_prem), 2)
-            return _result(
+            combined = round(ce_prem + pe_prem, 2)
+            result   = _result(
                 'SELL STRADDLE — ATM', 'STRADDLE', atm_strike, combined,
                 None, 'REDUCED',
                 iv_reg, atm_iv,
-                f'No directional gravity (LS {ls:+.3f}) | IV elevated at {atm_iv:.1f}% — sell range',
+                f'No directional gravity (LS {ls:+.3f}) | IV elevated at {atm_iv:.1f}% — collect ₹{combined} credit',
                 dte_warning, 'sell'
             )
+            result['ce_premium']      = round(ce_prem, 2)
+            result['pe_premium']      = round(pe_prem, 2)
+            result['breakeven_upper'] = round(atm_strike + combined, 1)
+            result['breakeven_lower'] = round(atm_strike - combined, 1)
+            result['max_profit_lot']  = round(combined * ls_lot, 0)
+            return result
         return _result(
             'NO TRADE', None, None, None, None, 'SKIP', iv_reg, atm_iv,
             f'No directional gravity — LS {ls:+.3f} is within FLAT zone', dte_warning, 'neutral'
