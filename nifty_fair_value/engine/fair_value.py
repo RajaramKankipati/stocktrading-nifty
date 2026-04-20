@@ -203,22 +203,24 @@ def ls_direction(ls):
 
 
 def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
-                  spot_in_oi_corridor, pcr, data_reliable=True):
+                  spot_in_oi_corridor, pcr, data_reliable=True, regime_bias=None):
     """
     Confidence score (0–5) for the LS direction signal.
 
     Checks:
-      1. Futures directional bias agrees (basis + OI change)
-      2. Pain well depth > 1.5  (strong expiry magnet)
-      3. Intraday gap agrees    (spot cheap/rich vs theoretical)
-      4. Spot inside OI corridor (dealer zone = cleaner gravity)
-      5. PCR aligned            (> 1.1 long / < 0.9 short)
+      1. futures_bias    — Futures basis + OI change agree with LS direction
+      2. strong_magnet   — Pain well depth > 1.5 (steep settlement gravity)
+      3. regime_aligned  — Three-gap regime bias (LONG/SHORT) matches LS direction.
+                           Replaces the broken intraday_aligned check. The old check
+                           used (spot − theoretical_price) with a ±20pt threshold, but
+                           theoretical price is OI-weighted PCP which tracks spot within
+                           3-8 pts by construction — the threshold was structurally
+                           unreachable and the check never fired.
+      4. in_oi_corridor  — Spot inside OI dealer corridor (gravitational field)
+      5. pcr_aligned     — PCR > 1.1 for LONG / < 0.9 for SHORT
 
-    FIX: `in_oi_corridor` defaults False (not True) when data is unavailable —
-    fail-safe, not fail-open. Missing data should never inflate confidence.
-
-    FIX: `data_reliable` gate — if theoretical price validation is UNRELIABLE
-    or chain has ATM data issues, the score is capped at 1 regardless of other checks.
+    `in_oi_corridor` defaults False when data is unavailable (fail-safe).
+    `data_reliable=False` caps score at 1 (unreliable anchor = unreliable signal).
     """
     direction = ls_direction(ls)
     is_long   = direction in ("LONG", "WEAK LONG")
@@ -232,11 +234,12 @@ def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
             (is_short and "BEAR" in bias_upper)
         ),
         'strong_magnet': bool(pain_depth and pain_depth > 1.5),
-        'intraday_aligned': (
-            (is_long  and intraday_gap is not None and intraday_gap < -20) or
-            (is_short and intraday_gap is not None and intraday_gap >  20)
+        # Three-gap regime bias confirms LS direction (replaces broken intraday_aligned)
+        'regime_aligned': (
+            (is_long  and regime_bias == 'LONG') or
+            (is_short and regime_bias == 'SHORT')
         ),
-        # FIX: default False — missing data must not boost confidence
+        # Default False — missing data must not boost confidence
         'in_oi_corridor': bool(spot_in_oi_corridor) if spot_in_oi_corridor is not None else False,
         'pcr_aligned': (
             (is_long  and pcr is not None and pcr > 1.1) or
@@ -246,7 +249,7 @@ def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
 
     raw_score = sum(1 for v in checks.values() if v)
 
-    # FIX: unreliable theoretical price or bad chain data caps score at 1
+    # Unreliable theoretical price or bad chain data caps score at 1
     score = min(raw_score, 1) if not data_reliable else raw_score
     level = "HIGH" if score >= 4 else "MEDIUM" if score >= 2 else "LOW"
 
@@ -264,21 +267,29 @@ def decision_point(ls, confidence):
     """
     Converts LS Factor + confidence into a single actionable decision.
 
-    LS sets the bias. Confidence validates the structural setup.
-    Intraday alignment (IG) is the entry trigger — without it, WAIT not SKIP.
+    LS sets the direction and magnitude. Score gates conviction.
+    The old design required intraday_aligned (check #3) as a hard entry trigger,
+    but that check was structurally unreachable (PCP theoretical ≈ spot by
+    construction). Removed: entry now gates on score alone.
 
-    FIX: If data_reliable is False, the system can never produce ENTER —
-    the best outcome is WAIT, because the structural signal may be correct
-    but the theoretical price anchor is untrustworthy.
+    Strong gravity  |LS| > 0.35:
+      score 4–5 → ENTER (high conviction)
+      score 3   → ENTER REDUCED SIZE (moderate conviction)
+      score 2   → WAIT — bias confirmed but needs more structure
+      score ≤ 1 → SKIP
+
+    Weak gravity  0.15 < |LS| ≤ 0.35:
+      score ≥ 3 → WATCH — wait for LS to cross 0.35 before sizing
+      score < 3 → NO TRADE
+
+    data_reliable=False blocks ENTER at any score; best outcome is WAIT.
     """
     if ls is None:
         return {'action': 'NO TRADE', 'detail': 'No data', 'style': 'neutral'}
 
     direction     = confidence.get('direction', 'FLAT')
     score         = confidence.get('score', 0)
-    checks        = confidence.get('checks', {})
     data_reliable = confidence.get('data_reliable', True)
-    intraday_ok   = checks.get('intraday_aligned', False)
 
     abs_ls   = abs(ls)
     is_long  = direction in ('LONG', 'WEAK LONG')
@@ -292,12 +303,12 @@ def decision_point(ls, confidence):
             'style' : 'neutral',
         }
 
-    # Unreliable data gate: can warn but never ENTER
+    # Unreliable data gate: structural signal may be right but anchor is broken
     if not data_reliable:
         if abs_ls > 0.35 and score >= 3:
             return {
                 'action': f'WAIT — {side} BIAS (DATA UNRELIABLE)',
-                'detail': 'Structural setup suggests {side} but theoretical price validation failed — do not enter until data is confirmed'.format(side=side),
+                'detail': f'Structural setup suggests {side} but theoretical price validation failed',
                 'style' : 'wait',
             }
         return {
@@ -308,28 +319,22 @@ def decision_point(ls, confidence):
 
     # Strong gravity  |LS| > 0.35
     if abs_ls > 0.35:
-        if score >= 4 and intraday_ok:
+        if score >= 4:
             return {
                 'action': f'ENTER {side}',
-                'detail': f'{score}/5 signals confirm — expiry pull and session both aligned',
+                'detail': f'{score}/5 signals confirm — strong expiry gravity with structural backing',
                 'style' : 'strong',
             }
-        if score >= 4 and not intraday_ok:
-            return {
-                'action': f'WAIT — STRONG {side} BIAS',
-                'detail': f'{score}/5 structural signals confirmed — waiting for intraday gap (IG) to turn',
-                'style' : 'wait',
-            }
-        if score == 3 and intraday_ok:
+        if score == 3:
             return {
                 'action': f'ENTER {side} — REDUCED SIZE',
-                'detail': '3/5 signals — enter smaller, stop at theoretical price',
+                'detail': f'3/5 signals confirm — enter smaller, exit at max pain or theoretical price',
                 'style' : 'moderate',
             }
-        if score == 3 and not intraday_ok:
+        if score == 2:
             return {
                 'action': f'WAIT — {side} BIAS',
-                'detail': '3/5 structural confirms but session gap not yet aligned — enter when IG turns',
+                'detail': f'Strong gravity (LS {ls:+.3f}) but only 2/5 confirms — wait for regime or PCR to align',
                 'style' : 'wait',
             }
         return {
@@ -339,10 +344,10 @@ def decision_point(ls, confidence):
         }
 
     # Weak gravity  0.15 < |LS| ≤ 0.35
-    if score >= 4 and intraday_ok:
+    if score >= 3:
         return {
             'action': f'WATCH — {side}',
-            'detail': f'All {score} signals agree but gravity thin (LS {ls:+.3f}) — wait for LS > 0.35 to size',
+            'detail': f'{score}/5 signals agree but gravity thin (LS {ls:+.3f}) — wait for LS > 0.35 before sizing',
             'style' : 'watch',
         }
 

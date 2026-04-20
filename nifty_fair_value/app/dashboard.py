@@ -165,7 +165,8 @@ def poller():
                     pain_depth,
                     expiry_fv_dict.get('spot_in_oi_corridor'),
                     pcr,
-                    theo_reliable and chain_ok
+                    theo_reliable and chain_ok,
+                    regime_bias=regime.get('bias')
                 )
                 ls_decision = decision_point(ls, ls_conf)
 
