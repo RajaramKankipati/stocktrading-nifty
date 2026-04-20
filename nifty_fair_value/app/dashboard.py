@@ -102,7 +102,7 @@ def poller():
                 theo_validation = validate_theoretical_prices(theo_price, microprice)
 
                 # ── Module 4: OI Levels & Max Pain ──
-                oi_levels = oi_weighted_levels(market_data.options)
+                oi_levels = oi_weighted_levels(market_data.options, market_data.spot)
                 call_resistance = oi_levels['call_resistance']
                 put_support     = oi_levels['put_support']
 

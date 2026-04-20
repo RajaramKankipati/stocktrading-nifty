@@ -1,17 +1,19 @@
-def oi_weighted_levels(options, active_threshold=0.002):
+def oi_weighted_levels(options, spot=None, active_threshold=0.002):
     """
-    PRD Module 4 §7.3: OI-weighted centroid for call side (resistance) and put side (support).
+    PRD Module 4 §7.3: OI-weighted centroid for call resistance and put support.
 
-    FIX: Added active OI filter — only strikes with OI > active_threshold fraction of the
-    side total are included. Deep ITM/OTM legacy strikes with negligible OI were making the
-    corridor 3000+ pts wide, causing `spot_in_oi_corridor` to be trivially True and
-    inflating ls_confidence. With 0.2% threshold, only genuinely active strikes contribute.
+    FIX: Now filters to OTM-only options when spot is provided.
+    - Call resistance: centroid of CALL OI at strikes ABOVE spot only.
+    - Put support:     centroid of PUT  OI at strikes BELOW spot only.
 
-    Weight = total OI at each strike (filtered). Result is the centre of gravity of all
-    writing on each side. Also computes HHI-style OI concentration (higher = stronger level).
+    ITM options are not resistance/support — a call strike below spot is already
+    exercisable and represents a delta hedge, not a writing wall. Including all
+    strikes was making the corridor 1300+ pts wide (5× the straddle), causing
+    `spot_in_oi_corridor` to be trivially True and giving a free confidence point
+    regardless of market structure.
 
-    Returns dict with call_resistance, put_support, oi_corridor_width,
-    call_oi_concentration, put_oi_concentration.
+    Active OI filter (0.2% of side total) is applied after the OTM filter to
+    exclude negligible far-OTM positions.
     """
     total_ce_oi = sum(o.call_oi for o in options)
     total_pe_oi = sum(o.put_oi for o in options)
@@ -24,12 +26,16 @@ def oi_weighted_levels(options, active_threshold=0.002):
     ce_sq_sum, pe_sq_sum = 0.0, 0.0
 
     for o in options:
-        if o.call_oi >= ce_cutoff:
+        # OTM call filter: only strikes above spot contribute to call resistance
+        is_otm_call = (spot is None) or (o.strike > spot)
+        if is_otm_call and o.call_oi >= ce_cutoff:
             ce_num    += o.strike * o.call_oi
             ce_den    += o.call_oi
             ce_sq_sum += o.call_oi ** 2
 
-        if o.put_oi >= pe_cutoff:
+        # OTM put filter: only strikes below spot contribute to put support
+        is_otm_put = (spot is None) or (o.strike < spot)
+        if is_otm_put and o.put_oi >= pe_cutoff:
             pe_num    += o.strike * o.put_oi
             pe_den    += o.put_oi
             pe_sq_sum += o.put_oi ** 2
