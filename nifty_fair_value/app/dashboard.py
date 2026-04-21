@@ -24,7 +24,7 @@ from engine.fair_value import (
 )
 from engine.signals import generate_execution_setup
 from engine.regime import classify_regime
-from engine.oi_metrics import pcr_oi
+from engine.oi_metrics import pcr_oi, pcr_near_atm, pcr_at_strike
 from engine.options_strategy import options_strategy
 from data import persistence
 
@@ -133,6 +133,15 @@ def poller():
                 sr  = calculate_straddle_range(true_atm_opt.call_ltp, true_atm_opt.put_ltp)
                 pcr = pcr_oi(market_data.total_ce_oi, market_data.total_pe_oi)
 
+                # Near-ATM PCR: ±3 strikes around true ATM — filters structural
+                # far-OTM hedging that permanently inflates total-chain PCR.
+                near_atm_pcr_val = pcr_near_atm(
+                    market_data.options, true_atm_opt.strike, window=3
+                )
+                # Max pain PCR: put/call OI ratio at the settlement anchor.
+                # > 1.3 = put writers defending as floor; < 0.7 = call ceiling.
+                max_pain_pcr_val = pcr_at_strike(market_data.options, mp_strike)
+
                 # PCR velocity — direction of change since last tick
                 pcr_velocity  = round(pcr - prev_pcr, 4) if prev_pcr is not None else 0.0
                 pcr_direction = (
@@ -194,6 +203,8 @@ def poller():
                     regime_bias=regime.get('bias'),
                     call_oi_hhi=oi_levels.get('call_oi_concentration'),
                     put_oi_hhi=oi_levels.get('put_oi_concentration'),
+                    near_atm_pcr=near_atm_pcr_val,
+                    max_pain_pcr=max_pain_pcr_val,
                 )
                 ls_decision = decision_point(ls, ls_conf)
 
@@ -297,6 +308,8 @@ def poller():
                         "alignment_gap"      : regime["alignment_gap"],
                         # Misc
                         "pcr_oi"             : pcr,
+                        "pcr_near_atm"       : near_atm_pcr_val,
+                        "pcr_max_pain"       : max_pain_pcr_val,
                         "pcr_velocity"       : pcr_velocity,
                         "pcr_direction"      : pcr_direction,
                         "oi_shift_call"      : oi_shift_call,

@@ -213,27 +213,28 @@ def ls_direction(ls):
 
 def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
                   expiry_gap, pcr, data_reliable=True, regime_bias=None,
-                  call_oi_hhi=None, put_oi_hhi=None):
+                  call_oi_hhi=None, put_oi_hhi=None,
+                  near_atm_pcr=None, max_pain_pcr=None):
     """
     Confidence score (0–5) for the LS direction signal.
 
     Checks:
       1. futures_bias   — Futures basis + OI change agree with LS direction
-      2. strong_magnet  — Pain well depth > 1.5 (steep settlement gravity) AND
-                          at least one OI side is concentrated (HHI > 0.08).
-                          Scattered OI means even a steep pain well has no
-                          real pin wall backing it.
-      3. regime_aligned — Three-gap regime bias (LONG/SHORT) matches LS direction.
-                          Replaces the broken intraday_aligned check (PCP tracks
-                          spot within 3-8 pts by construction → ±20pt threshold
-                          was structurally unreachable).
-      4. expiry_pull    — Expiry gap > 30 pts in LS direction (spot measurably
-                          displaced from Max Pain). Replaces in_oi_corridor, which
-                          was trivially True after OTM-only filter (1,419pt corridor).
-      5. pcr_aligned    — PCR > 1.1 for LONG / < 0.9 for SHORT
+      2. strong_magnet  — Pain well depth > 1.5 AND OI concentrated (HHI > 0.08)
+                          AND max pain PCR supports direction (when available).
+                          Max pain PCR > 1.3 for LONG = put writers defending that
+                          level as a floor; < 0.7 for SHORT = call writers defending
+                          as ceiling. No max_pain_pcr data → don't penalise.
+      3. regime_aligned — Three-gap regime bias (LONG/SHORT/COUNTER_TREND/WITH_TREND)
+                          matches LS direction.
+      4. expiry_pull    — Expiry gap > 30 pts in LS direction.
+      5. pcr_aligned    — Near-ATM PCR (±3 strikes) > 1.1 for LONG / < 0.9 for SHORT.
+                          Uses near-ATM PCR when provided, falls back to total-chain
+                          PCR. Near-ATM filters the structural far-OTM put hedging
+                          bias that permanently inflates total-chain PCR on Nifty.
 
-    `expiry_pull` defaults False when data unavailable (fail-safe).
-    `data_reliable=False` caps score at 1 (unreliable anchor = unreliable signal).
+    CONFLICTED uses near-ATM PCR (or total-chain fallback) — same reason.
+    `data_reliable=False` caps score at 1.
     """
     direction = ls_direction(ls)
     is_long   = direction in ("LONG", "WEAK LONG")
@@ -241,8 +242,11 @@ def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
 
     bias_upper = (directional_bias or "").upper()
 
-    # OI concentration: HHI > 0.08 means OI is concentrated at a few strikes
-    # (real pin walls), not scattered noise. When HHI data is absent, don't penalise.
+    # Use near-ATM PCR when available; fall back to total-chain for both
+    # the score check and the CONFLICTED gate.
+    effective_pcr = near_atm_pcr if near_atm_pcr is not None else pcr
+
+    # OI concentration: HHI > 0.08 means OI is concentrated at a few strikes.
     OI_CONC_THRESH = 0.08
     oi_concentrated = (
         (call_oi_hhi is None and put_oi_hhi is None) or
@@ -250,52 +254,60 @@ def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
         (put_oi_hhi  is not None and put_oi_hhi  > OI_CONC_THRESH)
     )
 
+    # Max pain PCR directional alignment: writers at the settlement anchor
+    # should be defending it in the same direction as LS for a strong magnet.
+    # Missing data (None) → neutral, don't penalise.
+    MP_PCR_BULL = 1.3   # put-writer floor
+    MP_PCR_BEAR = 0.7   # call-writer ceiling
+    max_pain_pcr_aligned = (
+        max_pain_pcr is None or
+        (is_long  and max_pain_pcr >= MP_PCR_BULL) or
+        (is_short and max_pain_pcr <= MP_PCR_BEAR)
+    )
+
     checks = {
         'futures_bias': (
             (is_long  and "BULL" in bias_upper) or
             (is_short and "BEAR" in bias_upper)
         ),
-        'strong_magnet': bool(pain_depth and pain_depth > 1.5) and oi_concentrated,
-        # Three-gap regime bias confirms LS direction.
-        # DOUBLE_UNDERVALUED/INTRADAY_DIP → 'LONG'; DOUBLE_OVERVALUED/INTRADAY_TRAP → 'SHORT'.
+        # strong_magnet: steep pain well + concentrated OI + max pain PCR
+        # supports direction. All three must agree — scattered OI or an opposing
+        # max-pain PCR means the "pin wall" is weaker than the depth alone suggests.
+        'strong_magnet': (
+            bool(pain_depth and pain_depth > 1.5)
+            and oi_concentrated
+            and max_pain_pcr_aligned
+        ),
         # TREND_DAY uses 'COUNTER_TREND' (session < expiry anchor → upside pull → LONG)
         # and 'WITH_TREND' (session > expiry anchor → downside gravity → SHORT).
-        # Previously these two TREND_DAY labels were never mapped → check never fired
-        # for TREND_DAY regime, which is the most common expiry-week state.
         'regime_aligned': (
             (is_long  and regime_bias in ('LONG',  'COUNTER_TREND')) or
             (is_short and regime_bias in ('SHORT', 'WITH_TREND'))
         ),
-        # Spot measurably displaced from Max Pain in LS direction (>30 pts)
-        # Replaces in_oi_corridor which was trivially True by construction
         'expiry_pull': (
             (is_long  and expiry_gap is not None and expiry_gap < -30) or
             (is_short and expiry_gap is not None and expiry_gap >  30)
         ),
+        # Near-ATM PCR: directional conviction near current price, not structural hedging.
         'pcr_aligned': (
-            (is_long  and pcr is not None and pcr > 1.1) or
-            (is_short and pcr is not None and pcr < 0.9)
+            (is_long  and effective_pcr is not None and effective_pcr > 1.1) or
+            (is_short and effective_pcr is not None and effective_pcr < 0.9)
         ),
     }
 
     raw_score = sum(1 for v in checks.values() if v)
-
-    # Unreliable theoretical price or bad chain data caps score at 1
     score = min(raw_score, 1) if not data_reliable else raw_score
     level = "HIGH" if score >= 4 else "MEDIUM" if score >= 2 else "LOW"
 
-    # Detect opposing signals that actively contradict LS direction.
-    # These don't affect the score — they inform the CONFLICTED decision state.
-    # PCR ONLY — futures basis is excluded because excess_basis is frequently
-    # negative in the early session (futures trade at a carry discount before
-    # institutional flows load in), which is a structural artifact of timing,
-    # not a genuine directional signal. Using it caused false CONFLICTED states
-    # in the morning when LS = LONG + PCR bullish but futures basis appeared bearish.
+    # CONFLICTED: near-ATM PCR actively contradicts LS direction.
+    # Far-OTM structural hedging is excluded by using near_atm_pcr.
     conflict_sources = []
-    if is_short and pcr is not None and pcr > 1.3:
-        conflict_sources.append(f"PCR {pcr:.2f} bullish")
-    if is_long  and pcr is not None and pcr < 0.8:
-        conflict_sources.append(f"PCR {pcr:.2f} bearish")
+    if is_short and effective_pcr is not None and effective_pcr > 1.3:
+        pcr_label = "near-ATM PCR" if near_atm_pcr is not None else "PCR"
+        conflict_sources.append(f"{pcr_label} {effective_pcr:.2f} bullish")
+    if is_long  and effective_pcr is not None and effective_pcr < 0.8:
+        pcr_label = "near-ATM PCR" if near_atm_pcr is not None else "PCR"
+        conflict_sources.append(f"{pcr_label} {effective_pcr:.2f} bearish")
 
     return {
         'direction'       : direction,
