@@ -256,10 +256,15 @@ def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
             (is_short and "BEAR" in bias_upper)
         ),
         'strong_magnet': bool(pain_depth and pain_depth > 1.5) and oi_concentrated,
-        # Three-gap regime bias confirms LS direction (replaces broken intraday_aligned)
+        # Three-gap regime bias confirms LS direction.
+        # DOUBLE_UNDERVALUED/INTRADAY_DIP → 'LONG'; DOUBLE_OVERVALUED/INTRADAY_TRAP → 'SHORT'.
+        # TREND_DAY uses 'COUNTER_TREND' (session < expiry anchor → upside pull → LONG)
+        # and 'WITH_TREND' (session > expiry anchor → downside gravity → SHORT).
+        # Previously these two TREND_DAY labels were never mapped → check never fired
+        # for TREND_DAY regime, which is the most common expiry-week state.
         'regime_aligned': (
-            (is_long  and regime_bias == 'LONG') or
-            (is_short and regime_bias == 'SHORT')
+            (is_long  and regime_bias in ('LONG',  'COUNTER_TREND')) or
+            (is_short and regime_bias in ('SHORT', 'WITH_TREND'))
         ),
         # Spot measurably displaced from Max Pain in LS direction (>30 pts)
         # Replaces in_oi_corridor which was trivially True by construction
@@ -281,18 +286,16 @@ def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
 
     # Detect opposing signals that actively contradict LS direction.
     # These don't affect the score — they inform the CONFLICTED decision state.
-    # PCR > 1.1 = bullish put-writer floor = contradicts a SHORT LS.
-    # PCR < 0.9 = bearish call-writer ceiling = contradicts a LONG LS.
-    # Futures directional bias from excess_basis also checked.
+    # PCR ONLY — futures basis is excluded because excess_basis is frequently
+    # negative in the early session (futures trade at a carry discount before
+    # institutional flows load in), which is a structural artifact of timing,
+    # not a genuine directional signal. Using it caused false CONFLICTED states
+    # in the morning when LS = LONG + PCR bullish but futures basis appeared bearish.
     conflict_sources = []
     if is_short and pcr is not None and pcr > 1.1:
         conflict_sources.append(f"PCR {pcr:.2f} bullish")
     if is_long  and pcr is not None and pcr < 0.9:
         conflict_sources.append(f"PCR {pcr:.2f} bearish")
-    if is_short and "BULL" in bias_upper:
-        conflict_sources.append("futures basis bullish")
-    if is_long  and "BEAR" in bias_upper:
-        conflict_sources.append("futures basis bearish")
 
     return {
         'direction'       : direction,
