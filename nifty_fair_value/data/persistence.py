@@ -11,7 +11,7 @@ def init_db():
     print(f"[DB] Initializing database at: {DB_NAME}")
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    
+
     # Market Ticks Table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS ticks (
@@ -28,9 +28,21 @@ def init_db():
         max_pain FLOAT,
         atm_strike INTEGER,
         atm_ce_iv FLOAT,
-        atm_pe_iv FLOAT
+        atm_pe_iv FLOAT,
+        call_resistance FLOAT,
+        put_support FLOAT,
+        straddle_value FLOAT
     )
     ''')
+
+    # Schema migration: add new columns to existing DBs that pre-date this schema
+    for col, typ in [('call_resistance', 'FLOAT'),
+                     ('put_support',     'FLOAT'),
+                     ('straddle_value',  'FLOAT')]:
+        try:
+            cursor.execute(f"ALTER TABLE ticks ADD COLUMN {col} {typ}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
     
     # Signals Table
     cursor.execute('''
@@ -78,10 +90,10 @@ def save_market_tick(data):
         
         cursor.execute('''
         INSERT INTO ticks (
-            spot, futures, theoretical, today_fair, expiry_fair, 
-            arbitrage, ls_factor, pcr, max_pain, atm_strike, 
-            atm_ce_iv, atm_pe_iv
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            spot, futures, theoretical, today_fair, expiry_fair,
+            arbitrage, ls_factor, pcr, max_pain, atm_strike,
+            atm_ce_iv, atm_pe_iv, call_resistance, put_support, straddle_value
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             data.get('spot'),
             data.get('futures'),
@@ -94,7 +106,10 @@ def save_market_tick(data):
             data.get('max_pain'),
             data.get('atm_strike'),
             data.get('atm_ce_iv'),
-            data.get('atm_pe_iv')
+            data.get('atm_pe_iv'),
+            data.get('call_resistance'),
+            data.get('put_support'),
+            data.get('straddle_value'),
         ))
         
         # Also log signal if active
@@ -121,6 +136,43 @@ def save_market_tick(data):
 # Auto-initialize when module is imported — ensures tables exist
 # regardless of whether init_db() was explicitly called by the caller.
 init_db()
+
+
+def get_last_n_ticks(n=12):
+    """
+    Returns the last N ticks for the current session (default 12 × 5 s ≈ 1 min).
+    Used for intraday trend signals: PCR velocity, OI level drift, LS momentum.
+    Returns a list of dicts, most-recent first.
+    """
+    try:
+        conn   = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT datetime(timestamp, 'localtime'),
+                   spot, ls_factor, pcr,
+                   call_resistance, put_support, straddle_value
+            FROM ticks
+            WHERE date(timestamp, 'localtime') = date('now', 'localtime')
+            ORDER BY timestamp DESC
+            LIMIT ?
+        ''', (n,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [
+            {
+                'time'            : r[0],
+                'spot'            : r[1],
+                'ls_factor'       : r[2],
+                'pcr'             : r[3],
+                'call_resistance' : r[4],
+                'put_support'     : r[5],
+                'straddle_value'  : r[6],
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        print(f"Error fetching last ticks: {e}")
+        return []
 
 
 def get_history():

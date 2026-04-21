@@ -50,11 +50,24 @@ def find_true_atm(options, spot, window=8):
 
     min_spread = min(v[0] for v in iv_spreads.values())
 
-    # If all spreads are identical (e.g. broker returns CE_IV == PE_IV for every
-    # strike when market is closed or data is stale), the algorithm has no signal
-    # to work with — fall back to listed ATM rather than picking arbitrarily.
+    # If all spreads are identical (Groww always returns CE_IV == PE_IV at every
+    # strike), IV minimisation has no discriminating signal. Fall back to OI-balance:
+    # the true ATM is where CE and PE open interest are most equal — writers and
+    # hedgers cluster symmetrically at the consensus forward, so the fractional
+    # OI imbalance |CE_OI − PE_OI| / (CE_OI + PE_OI) is minimised there.
     all_spreads = [v[0] for v in iv_spreads.values()]
     if len(set(round(s, 6) for s in all_spreads)) == 1:
+        oi_balance = {}
+        for opt in candidates:
+            if opt.call_oi > 0 and opt.put_oi > 0:
+                total_oi  = opt.call_oi + opt.put_oi
+                imbalance = abs(opt.call_oi - opt.put_oi) / total_oi  # 0 = perfectly balanced
+                oi_balance[opt.strike] = (imbalance, opt)
+        if oi_balance:
+            true_strike = min(oi_balance, key=lambda k: oi_balance[k][0])
+            true_opt    = oi_balance[true_strike][1]
+            skew_shift  = int(listed_atm - true_strike)
+            return true_opt, round(min_spread, 4), listed_atm, skew_shift
         return listed_atm_opt, round(min_spread, 4), listed_atm, 0
 
     # Cap: true ATM cannot stray more than 3 strikes from listed ATM.

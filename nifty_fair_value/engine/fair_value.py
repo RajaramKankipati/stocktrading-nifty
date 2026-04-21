@@ -212,13 +212,17 @@ def ls_direction(ls):
 
 
 def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
-                  expiry_gap, pcr, data_reliable=True, regime_bias=None):
+                  expiry_gap, pcr, data_reliable=True, regime_bias=None,
+                  call_oi_hhi=None, put_oi_hhi=None):
     """
     Confidence score (0–5) for the LS direction signal.
 
     Checks:
       1. futures_bias   — Futures basis + OI change agree with LS direction
-      2. strong_magnet  — Pain well depth > 1.5 (steep settlement gravity)
+      2. strong_magnet  — Pain well depth > 1.5 (steep settlement gravity) AND
+                          at least one OI side is concentrated (HHI > 0.08).
+                          Scattered OI means even a steep pain well has no
+                          real pin wall backing it.
       3. regime_aligned — Three-gap regime bias (LONG/SHORT) matches LS direction.
                           Replaces the broken intraday_aligned check (PCP tracks
                           spot within 3-8 pts by construction → ±20pt threshold
@@ -237,12 +241,21 @@ def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
 
     bias_upper = (directional_bias or "").upper()
 
+    # OI concentration: HHI > 0.08 means OI is concentrated at a few strikes
+    # (real pin walls), not scattered noise. When HHI data is absent, don't penalise.
+    OI_CONC_THRESH = 0.08
+    oi_concentrated = (
+        (call_oi_hhi is None and put_oi_hhi is None) or
+        (call_oi_hhi is not None and call_oi_hhi > OI_CONC_THRESH) or
+        (put_oi_hhi  is not None and put_oi_hhi  > OI_CONC_THRESH)
+    )
+
     checks = {
         'futures_bias': (
             (is_long  and "BULL" in bias_upper) or
             (is_short and "BEAR" in bias_upper)
         ),
-        'strong_magnet': bool(pain_depth and pain_depth > 1.5),
+        'strong_magnet': bool(pain_depth and pain_depth > 1.5) and oi_concentrated,
         # Three-gap regime bias confirms LS direction (replaces broken intraday_aligned)
         'regime_aligned': (
             (is_long  and regime_bias == 'LONG') or

@@ -51,7 +51,8 @@ def poller():
         client.refresh_instruments()
 
         last_instr_refresh = time.time()
-        baselines = {}
+        session_baselines  = {}   # OI levels at session open — set once, never updated
+        prev_pcr           = None  # previous tick PCR for velocity computation
 
         print("[POLLER] Initialization complete. Entering main loop.")
         poll_status = "Connected"
@@ -125,12 +126,31 @@ def poller():
 
                 mp_strike, pain_surface, pain_depth = max_pain(market_data.options)
 
-                if not baselines and call_resistance and put_support:
-                    baselines = {'call_level': call_resistance, 'put_level': put_support}
+                if not session_baselines and call_resistance and put_support:
+                    session_baselines = {'call_level': call_resistance, 'put_level': put_support}
 
                 # ── Straddle + PCR (needed before LS and regime) ──
                 sr  = calculate_straddle_range(true_atm_opt.call_ltp, true_atm_opt.put_ltp)
                 pcr = pcr_oi(market_data.total_ce_oi, market_data.total_pe_oi)
+
+                # PCR velocity — direction of change since last tick
+                pcr_velocity  = round(pcr - prev_pcr, 4) if prev_pcr is not None else 0.0
+                pcr_direction = (
+                    "RISING"  if pcr_velocity >  0.02 else
+                    "FALLING" if pcr_velocity < -0.02 else
+                    "STABLE"
+                )
+                prev_pcr = pcr
+
+                # OI level shift vs session open (None until first baselines set)
+                oi_shift_call = (
+                    round(call_resistance - session_baselines['call_level'], 1)
+                    if session_baselines and call_resistance else None
+                )
+                oi_shift_put = (
+                    round(put_support - session_baselines['put_level'], 1)
+                    if session_baselines and put_support else None
+                )
                 straddle_upper = round(true_atm_opt.strike + sr, 1)
                 straddle_lower = round(true_atm_opt.strike - sr, 1)
 
@@ -171,7 +191,9 @@ def poller():
                     regime['expiry_gap'],
                     pcr,
                     theo_reliable and chain_ok,
-                    regime_bias=regime.get('bias')
+                    regime_bias=regime.get('bias'),
+                    call_oi_hhi=oi_levels.get('call_oi_concentration'),
+                    put_oi_hhi=oi_levels.get('put_oi_concentration'),
                 )
                 ls_decision = decision_point(ls, ls_conf)
 
@@ -185,7 +207,7 @@ def poller():
                 today_fv_scalar = today_fair(market_data.futures, theo_price, market_data.futures_vwap)
                 setup = generate_execution_setup(
                     market_data, today_fv_scalar, expiry_fv_scalar, theo_price,
-                    call_resistance, put_support, sr, baselines
+                    call_resistance, put_support, sr, session_baselines
                 )
 
                 # Chart data (±3 strikes around true ATM)
@@ -275,6 +297,10 @@ def poller():
                         "alignment_gap"      : regime["alignment_gap"],
                         # Misc
                         "pcr_oi"             : pcr,
+                        "pcr_velocity"       : pcr_velocity,
+                        "pcr_direction"      : pcr_direction,
+                        "oi_shift_call"      : oi_shift_call,
+                        "oi_shift_put"       : oi_shift_put,
                         "signal"             : setup["signal"],
                         "setup"              : setup,
                         "expiry"             : opt_expiry,

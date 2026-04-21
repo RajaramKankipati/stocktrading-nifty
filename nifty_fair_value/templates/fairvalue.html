@@ -426,12 +426,14 @@
                 <div class="lv-label">OI Corridor</div>
                 <div class="lv-val" style="font-size:14px;" id="lv-corridor">—</div>
                 <div class="lv-sub" id="lv-corridor-width">—</div>
+                <div class="lv-sub" id="lv-oi-shift" style="font-size:10px; margin-top:2px;">—</div>
             </div>
 
             <div class="lv-card">
                 <div class="lv-label">PCR (OI)</div>
                 <div class="lv-val" id="lv-pcr">—</div>
                 <div class="lv-sub" id="lv-pcr-sub">—</div>
+                <div class="lv-sub" id="lv-pcr-dir" style="font-size:10px; margin-top:2px;">—</div>
             </div>
 
         </div>
@@ -659,6 +661,27 @@
         set('lv-pcr', d.pcr_oi != null ? fmt(d.pcr_oi, 2) : '—');
         const pcr = d.pcr_oi;
         set('lv-pcr-sub', pcr != null ? (pcr > 1.2 ? 'Put heavy — support' : pcr < 0.8 ? 'Call heavy — resistance' : 'Balanced') : '—');
+        const pcrDir = d.pcr_direction;
+        const pcrArrow = pcrDir === 'RISING' ? '▲ Rising — bullish build' : pcrDir === 'FALLING' ? '▼ Falling — unwinding' : '— Stable';
+        const pcrDirEl = document.getElementById('lv-pcr-dir');
+        if (pcrDirEl) {
+            pcrDirEl.textContent = pcrDir ? pcrArrow : '—';
+            pcrDirEl.style.color = pcrDir === 'RISING' ? 'var(--emerald)' : pcrDir === 'FALLING' ? 'var(--rose)' : 'var(--text-muted)';
+        }
+
+        // OI level shift vs session open
+        const shiftC = d.oi_shift_call, shiftP = d.oi_shift_put;
+        const shiftEl = document.getElementById('lv-oi-shift');
+        if (shiftEl) {
+            if (shiftC != null && shiftP != null) {
+                const cTxt = (shiftC >= 0 ? '↑' : '↓') + fmt(Math.abs(shiftC), 0) + ' call';
+                const pTxt = (shiftP >= 0 ? '↑' : '↓') + fmt(Math.abs(shiftP), 0) + ' put';
+                shiftEl.textContent = `Since open: ${cTxt} / ${pTxt}`;
+                shiftEl.style.color = 'var(--text-muted)';
+            } else {
+                shiftEl.textContent = 'Since open: —';
+            }
+        }
     }
 
     // ── Option Chain ─────────────────────────────────────────────
