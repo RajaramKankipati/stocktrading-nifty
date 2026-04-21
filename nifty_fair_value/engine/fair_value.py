@@ -292,9 +292,9 @@ def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
     # not a genuine directional signal. Using it caused false CONFLICTED states
     # in the morning when LS = LONG + PCR bullish but futures basis appeared bearish.
     conflict_sources = []
-    if is_short and pcr is not None and pcr > 1.1:
+    if is_short and pcr is not None and pcr > 1.3:
         conflict_sources.append(f"PCR {pcr:.2f} bullish")
-    if is_long  and pcr is not None and pcr < 0.9:
+    if is_long  and pcr is not None and pcr < 0.8:
         conflict_sources.append(f"PCR {pcr:.2f} bearish")
 
     return {

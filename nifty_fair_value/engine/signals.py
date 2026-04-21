@@ -1,107 +1,142 @@
-def generate_execution_setup(market_data, today_fv, expiry_fv, theoretical_price, call_level, put_level, straddle_range, baselines=None):
+def generate_execution_setup(market_data, today_fv, expiry_fv, theoretical_price,
+                             call_level, put_level, straddle_range, baselines=None,
+                             ls=0.0):
     """
-    Core Execution Engine: Converts fair values and OI levels into actionable trade setups.
-    Setups: Breakout Trap (C), Trend Continuation (B), Mean Reversion (A).
-    Checked in order of specificity.
+    Core Execution Engine: Converts LS factor + OI context into actionable trade setups.
+
+    Setup C — Breakout Trap  : spot breaks a known OI wall but synthetic disagrees
+    Setup B — Trend Momentum : strong LS direction with confirming OI wall migration
+    Setup A — Expiry Gravity : strong LS + futures basis confirms institutional positioning
+
+    SL sized as straddle_range * 0.5 so risk is proportional to current volatility.
     """
-    spot = market_data.spot
+    spot    = market_data.spot
     futures = market_data.futures
-    
-    # 1. Base Variables
-    # Shifting detection (Default to Neutal if no baseline)
-    put_shifting_up = baselines and put_level > baselines.get('put_level', 0) + 10
-    call_shifting_down = baselines and call_level < baselines.get('call_level', 999999) - 10
-    
+    basis   = round(futures - spot, 2)
+
+    risk_unit = max(straddle_range * 0.5, 20) if straddle_range else 30
+
+    # OI wall migration vs session open
+    put_shifting_up   = baselines and put_level   > baselines.get('put_level',   0)      + 10
+    call_shifting_down = baselines and call_level < baselines.get('call_level',   999999) - 10
+
     setup = {
-        "signal": "NEUTRAL",
-        "type": "No Active Setup",
-        "entry": 0.0,
-        "sl": 0.0,
-        "target": 0.0,
-        "trailing": "N/A",
-        "risk_reward": "N/A"
+        "signal"      : "NEUTRAL",
+        "type"        : "No Active Setup",
+        "entry"       : 0.0,
+        "sl"          : 0.0,
+        "target"      : 0.0,
+        "trailing"    : "N/A",
+        "risk_reward" : "N/A",
     }
 
-    # 2. Setup C: Breakout Trap (Best RR Trades)
-    # Check this first as it is highly specific.
-    # SHORT TRAP: Spot breaks above call_level, Synthetic NOT supporting
-    if spot >= call_level + 10 and theoretical_price < call_level:
+    # ── Setup C: Breakout Trap ──────────────────────────────────────────────
+    # Spot breaks an OI wall but synthetic (put-call parity price) disagrees.
+    # Synthetic lags spot on traps because market makers reprice calls/puts
+    # slowly — a divergence >10pts at the wall signals a false breakout.
+    if call_level and spot >= call_level + 10 and theoretical_price < call_level:
+        sl     = round(spot + risk_unit, 1)
+        target = round(expiry_fv if expiry_fv else spot - straddle_range, 1)
+        rr     = round(abs(spot - target) / abs(sl - spot), 1) if sl != spot else "N/A"
         setup.update({
-            "signal": "SHORT",
-            "type": "Breakout Trap",
-            "entry": spot,
-            "sl": spot + 20, # Recent swing high + buffer
-            "target": today_fv,
-            "trailing": "Quick exit at Today FV"
+            "signal"     : "SHORT",
+            "type"       : "Breakout Trap",
+            "entry"      : spot,
+            "sl"         : sl,
+            "target"     : target,
+            "trailing"   : "Exit at expiry fair value",
+            "risk_reward": f"1:{rr}",
         })
         return setup
 
-    # LONG TRAP: Spot breaks below put_level, Synthetic NOT supporting
-    if spot <= put_level - 10 and theoretical_price > put_level:
+    if put_level and spot <= put_level - 10 and theoretical_price > put_level:
+        sl     = round(spot - risk_unit, 1)
+        target = round(expiry_fv if expiry_fv else spot + straddle_range, 1)
+        rr     = round(abs(target - spot) / abs(spot - sl), 1) if sl != spot else "N/A"
         setup.update({
-            "signal": "LONG",
-            "type": "Breakout Trap",
-            "entry": spot,
-            "sl": spot - 20, # Recent swing low + buffer
-            "target": today_fv,
-            "trailing": "Quick exit at Today FV"
+            "signal"     : "LONG",
+            "type"       : "Breakout Trap",
+            "entry"      : spot,
+            "sl"         : sl,
+            "target"     : target,
+            "trailing"   : "Exit at expiry fair value",
+            "risk_reward": f"1:{rr}",
         })
         return setup
 
-    # 3. Setup B: Trend Continuation (Momentum Days)
-    # LONG: Spot > Today FV > Expiry FV, Synthetic > Futures, Put Level shifting up
-    if spot > today_fv > expiry_fv and theoretical_price > futures and put_shifting_up:
+    # ── Setup B: Trend Momentum ─────────────────────────────────────────────
+    # Strong LS direction (gravity pulling spot toward max pain) confirmed by
+    # OI walls migrating in the same direction — writers are rolling positions.
+    # ls > 0.35: spot below max pain → expiry gravity pulls UP → LONG
+    # ls < -0.35: spot above max pain → expiry gravity pulls DOWN → SHORT
+    if ls > 0.35 and put_shifting_up:
+        sl     = round(spot - risk_unit, 1)
+        target = round(spot + straddle_range, 1)
+        rr     = round(abs(target - spot) / abs(spot - sl), 1) if sl != spot else "N/A"
         setup.update({
-            "signal": "LONG",
-            "type": "Trend Continuation",
-            "entry": spot,
-            "sl": today_fv,
-            "target": max(expiry_fv, spot + straddle_range),
-            "trailing": "Trail using Today FV upward shift"
+            "signal"     : "LONG",
+            "type"       : "Trend Momentum",
+            "entry"      : spot,
+            "sl"         : sl,
+            "target"     : target,
+            "trailing"   : "Trail SL up as put wall migrates higher",
+            "risk_reward": f"1:{rr}",
         })
         return setup
 
-    # SHORT: Spot < Today FV < Expiry FV, Synthetic < Futures, Call Level shifting down
-    if spot < today_fv < expiry_fv and theoretical_price < futures and call_shifting_down:
+    if ls < -0.35 and call_shifting_down:
+        sl     = round(spot + risk_unit, 1)
+        target = round(spot - straddle_range, 1)
+        rr     = round(abs(spot - target) / abs(sl - spot), 1) if sl != spot else "N/A"
         setup.update({
-            "signal": "SHORT",
-            "type": "Trend Continuation",
-            "entry": spot,
-            "sl": today_fv,
-            "target": min(expiry_fv, spot - straddle_range),
-            "trailing": "Trail using Today FV downward shift"
+            "signal"     : "SHORT",
+            "type"       : "Trend Momentum",
+            "entry"      : spot,
+            "sl"         : sl,
+            "target"     : target,
+            "trailing"   : "Trail SL down as call wall migrates lower",
+            "risk_reward": f"1:{rr}",
         })
         return setup
 
-    # 4. Setup A: Mean Reversion (Highest Consistency)
-    # SHORT: Spot > Today FV + 0.3%, Synthetic <= Futures, Spot near Call OI
-    if spot > today_fv * 1.003 and theoretical_price <= futures and abs(spot - call_level) < 25:
+    # ── Setup A: Expiry Gravity ─────────────────────────────────────────────
+    # Strong LS confirmed by futures basis: positive basis (futures > spot) shows
+    # institutional demand for upside; negative basis shows defensive hedging.
+    # This is the highest-consistency setup — basis and LS must agree.
+    if ls > 0.35 and basis > 0:
+        sl     = round(spot - risk_unit, 1)
+        target = round(expiry_fv if expiry_fv else spot + straddle_range * 0.7, 1)
+        rr     = round(abs(target - spot) / abs(spot - sl), 1) if sl != spot else "N/A"
         setup.update({
-            "signal": "SHORT",
-            "type": "Mean Reversion",
-            "entry": spot,
-            "sl": max(call_level + 15, spot + 0.5 * straddle_range),
-            "target": today_fv,
-            "trailing": f"Trail to cost after +0.3%, then trail using Today FV"
+            "signal"     : "LONG",
+            "type"       : "Expiry Gravity",
+            "entry"      : spot,
+            "sl"         : sl,
+            "target"     : target,
+            "trailing"   : "Trail to cost at +0.5× risk; target expiry fair value",
+            "risk_reward": f"1:{rr}",
         })
         return setup
 
-    # LONG: Spot < Today FV - 0.3%, Synthetic >= Futures, Spot near Put OI
-    if spot < today_fv * 0.997 and theoretical_price >= futures and abs(spot - put_level) < 25:
+    if ls < -0.35 and basis < 0:
+        sl     = round(spot + risk_unit, 1)
+        target = round(expiry_fv if expiry_fv else spot - straddle_range * 0.7, 1)
+        rr     = round(abs(spot - target) / abs(sl - spot), 1) if sl != spot else "N/A"
         setup.update({
-            "signal": "LONG",
-            "type": "Mean Reversion",
-            "entry": spot,
-            "sl": min(put_level - 15, spot - 0.5 * straddle_range),
-            "target": today_fv,
-            "trailing": "Trail to cost after +0.3%, then trail using Today FV"
+            "signal"     : "SHORT",
+            "type"       : "Expiry Gravity",
+            "entry"      : spot,
+            "sl"         : sl,
+            "target"     : target,
+            "trailing"   : "Trail to cost at +0.5× risk; target expiry fair value",
+            "risk_reward": f"1:{rr}",
         })
         return setup
 
-    # 5. Fallback: directional bias badge only, no active setup
-    if spot > today_fv:
+    # ── Fallback: directional bias only ────────────────────────────────────
+    if ls > 0.15:
         setup["signal"] = "BULLISH"
-    elif spot < today_fv:
+    elif ls < -0.15:
         setup["signal"] = "BEARISH"
 
     return setup

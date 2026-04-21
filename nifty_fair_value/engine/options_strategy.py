@@ -97,6 +97,15 @@ def options_strategy(ls, ls_conf, atm_iv, opt_dte, options, atm_strike, spot, lo
             'Theoretical price unreliable — option pricing anchor unavailable', dte_warning, 'neutral'
         )
 
+    # ── Guard: CONFLICTED — LS direction actively opposed by PCR ───────────
+    if ls_conf.get('conflict'):
+        sources = " + ".join(ls_conf.get('conflict_sources', []))
+        return _result(
+            'WAIT — CONFLICTED', None, None, None, None, 'SKIP', iv_reg, atm_iv,
+            f'LS points {direction} but {sources} — wait for opposing forces to resolve',
+            dte_warning, 'neutral'
+        )
+
     # ── Expiry day logic ────────────────────────────────────────────────────
     if opt_dte == 0:
         if side and abs_ls > 0.35 and score >= 3 and iv_reg in ('ELEVATED', 'HIGH'):
@@ -156,20 +165,45 @@ def options_strategy(ls, ls_conf, atm_iv, opt_dte, options, atm_strike, spot, lo
             dte_warning, 'neutral'
         )
 
-    # ── Determine strike offset and size ───────────────────────────────────
-    # ATM (offset=0): strong signal + normal/low IV only
-    # 1-OTM (offset=1): elevated IV or weaker signal — cheaper entry, defined risk
+    # ── Weak gravity: WATCH only (align with decision_point which requires WATCH ≥3) ──
+    # 0.15 < |LS| ≤ 0.35: gravity exists but insufficient to size into. Tell trader
+    # what to watch for so they're ready when gravity strengthens.
+    if abs_ls <= 0.35:
+        if score >= 3:
+            watch_opt = _find_strike(options, atm_strike, side, 1)
+            watch_prem = watch_opt.call_ltp if side == 'CE' else watch_opt.put_ltp
+            return _result(
+                f'WATCH — prepare BUY {side} 1-OTM @ {watch_opt.strike}', side,
+                watch_opt.strike, round(watch_prem, 2) if watch_prem else None,
+                None, 'WATCH', iv_reg, atm_iv,
+                f'{direction} bias weak (LS {ls:+.4f}) | {score}/5 confirms | Wait for |LS| > 0.35 before entering',
+                dte_warning, 'moderate'
+            )
+        return _result(
+            'NO TRADE', None, None, None, None, 'SKIP', iv_reg, atm_iv,
+            f'Weak gravity LS {ls:+.3f} with low conviction {score}/5 — no edge', dte_warning, 'neutral'
+        )
+
+    # ── Strong gravity |LS| > 0.35 — gate on score before sizing ──────────
+    # score=2: bias confirmed but structure incomplete → WAIT (aligns with decision_point)
+    if score == 2:
+        return _result(
+            f'WAIT — {direction} BIAS', None, None, None, None, 'SKIP', iv_reg, atm_iv,
+            f'Strong LS {ls:+.3f} but only {score}/5 confirms — bias noted, needs more structure',
+            dte_warning, 'moderate'
+        )
+
+    # ── Determine strike offset and size (score ≥ 3, |LS| > 0.35) ─────────
+    # ATM (offset=0): full conviction, normal/low IV
+    # 1-OTM (offset=1): elevated IV or score=3 — cheaper entry, defined risk
     elevated_iv = iv_reg in ('ELEVATED', 'HIGH')
     strong      = abs_ls > 0.35 and score >= 4
 
     if strong and not elevated_iv:
         offset, size_note, style = 0, 'FULL SIZE', 'strong'
-    elif abs_ls > 0.35:
-        # strong + elevated IV, or score == 3 — both prefer OTM to reduce premium risk
-        offset, size_note, style = 1, 'REDUCED SIZE', 'moderate'
     else:
-        # weak directional (0.15–0.35, score 2–3)
-        offset, size_note, style = 1, 'SMALL SIZE', 'moderate'
+        # score=3 or elevated IV at score≥4 — prefer OTM to reduce premium risk
+        offset, size_note, style = 1, 'REDUCED SIZE', 'moderate'
 
     opt    = _find_strike(options, atm_strike, side, offset)
     strike = opt.strike

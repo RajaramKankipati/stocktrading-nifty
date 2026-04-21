@@ -207,7 +207,7 @@ def poller():
                 today_fv_scalar = today_fair(market_data.futures, theo_price, market_data.futures_vwap)
                 setup = generate_execution_setup(
                     market_data, today_fv_scalar, expiry_fv_scalar, theo_price,
-                    call_resistance, put_support, sr, session_baselines
+                    call_resistance, put_support, sr, session_baselines, ls=ls
                 )
 
                 # Chart data (±3 strikes around true ATM)
