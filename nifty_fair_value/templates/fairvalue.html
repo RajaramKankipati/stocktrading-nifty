@@ -131,7 +131,9 @@
         .dec-watch    { border-color: rgba(167,139,250,0.3); }
         .dec-skip     .decision-action { color: var(--rose); }
         .dec-skip     { border-color: rgba(251,113,133,0.2); }
-        .dec-neutral  .decision-action { color: var(--text-muted); }
+        .dec-neutral     .decision-action { color: var(--text-muted); }
+        .dec-conflicted  .decision-action { color: var(--cyan); }
+        .dec-conflicted  { border-color: rgba(34,211,238,0.35); background: rgba(34,211,238,0.04); }
 
         /* Confidence */
         .conf-panel { display: flex; flex-direction: column; gap: 10px; }
@@ -534,7 +536,8 @@
     };
     const DEC_STYLE = {
         'strong':'dec-strong','moderate':'dec-moderate','wait':'dec-wait',
-        'watch':'dec-watch',  'skip':'dec-skip',        'neutral':'dec-neutral'
+        'watch':'dec-watch',  'skip':'dec-skip',        'neutral':'dec-neutral',
+        'conflicted':'dec-conflicted'
     };
 
     function renderLS(d) {

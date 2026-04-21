@@ -279,13 +279,30 @@ def ls_confidence(ls, directional_bias, intraday_gap, pain_depth,
     score = min(raw_score, 1) if not data_reliable else raw_score
     level = "HIGH" if score >= 4 else "MEDIUM" if score >= 2 else "LOW"
 
+    # Detect opposing signals that actively contradict LS direction.
+    # These don't affect the score — they inform the CONFLICTED decision state.
+    # PCR > 1.1 = bullish put-writer floor = contradicts a SHORT LS.
+    # PCR < 0.9 = bearish call-writer ceiling = contradicts a LONG LS.
+    # Futures directional bias from excess_basis also checked.
+    conflict_sources = []
+    if is_short and pcr is not None and pcr > 1.1:
+        conflict_sources.append(f"PCR {pcr:.2f} bullish")
+    if is_long  and pcr is not None and pcr < 0.9:
+        conflict_sources.append(f"PCR {pcr:.2f} bearish")
+    if is_short and "BULL" in bias_upper:
+        conflict_sources.append("futures basis bullish")
+    if is_long  and "BEAR" in bias_upper:
+        conflict_sources.append("futures basis bearish")
+
     return {
-        'direction'    : direction,
-        'score'        : score,
-        'max_score'    : 5,
-        'level'        : level,
-        'checks'       : checks,
-        'data_reliable': data_reliable,
+        'direction'       : direction,
+        'score'           : score,
+        'max_score'       : 5,
+        'level'           : level,
+        'checks'          : checks,
+        'data_reliable'   : data_reliable,
+        'conflict'        : len(conflict_sources) > 0,
+        'conflict_sources': conflict_sources,
     }
 
 
@@ -297,6 +314,11 @@ def decision_point(ls, confidence):
     The old design required intraday_aligned (check #3) as a hard entry trigger,
     but that check was structurally unreachable (PCP theoretical ≈ spot by
     construction). Removed: entry now gates on score alone.
+
+    CONFLICTED (checked before gravity gates):
+      LS direction actively opposed by PCR or futures basis — two market
+      forces pointing in opposite directions. Trading into this is picking
+      a side before the conflict is resolved. Wait for one force to capitulate.
 
     Strong gravity  |LS| > 0.35:
       score 4–5 → ENTER (high conviction)
@@ -313,9 +335,11 @@ def decision_point(ls, confidence):
     if ls is None:
         return {'action': 'NO TRADE', 'detail': 'No data', 'style': 'neutral'}
 
-    direction     = confidence.get('direction', 'FLAT')
-    score         = confidence.get('score', 0)
-    data_reliable = confidence.get('data_reliable', True)
+    direction        = confidence.get('direction', 'FLAT')
+    score            = confidence.get('score', 0)
+    data_reliable    = confidence.get('data_reliable', True)
+    conflict         = confidence.get('conflict', False)
+    conflict_sources = confidence.get('conflict_sources', [])
 
     abs_ls   = abs(ls)
     is_long  = direction in ('LONG', 'WEAK LONG')
@@ -327,6 +351,18 @@ def decision_point(ls, confidence):
             'action': 'NO TRADE',
             'detail': 'LS near zero — no expiry gravity to trade',
             'style' : 'neutral',
+        }
+
+    # Conflicted: LS direction opposed by PCR or futures basis.
+    # |LS| > 0.15 ensures there is at least weak gravity to conflict with.
+    # This fires before the gravity gates — even strong LS must wait for
+    # the opposing force to resolve before entry is warranted.
+    if conflict and abs_ls > 0.15:
+        reason = " + ".join(conflict_sources)
+        return {
+            'action': f'WAIT — CONFLICTED ({side})',
+            'detail': f'LS points {side} ({ls:+.3f}) but {reason} — opposing forces, wait for one side to capitulate',
+            'style' : 'conflicted',
         }
 
     # Unreliable data gate: structural signal may be right but anchor is broken
