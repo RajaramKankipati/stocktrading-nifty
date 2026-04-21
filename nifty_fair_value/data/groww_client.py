@@ -1,9 +1,11 @@
 import time
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from growwapi import GrowwAPI
 from .data_models import OptionData, MarketData
+
+_IST = timezone(timedelta(hours=5, minutes=30))
 
 # Retry delays (seconds) for transient errors and 429 rate-limits
 _RETRY_DELAYS = (1, 2, 4)
@@ -51,27 +53,106 @@ class GrowwClient:
             print(f"[ERROR] Failed to refresh instruments: {e}")
 
     def get_active_expiries(self):
-        """Discovers the nearest weekly option expiry and nearest futures expiry."""
+        """Discovers the nearest weekly option expiry and nearest futures expiry.
+
+        After 15:30 IST the current day's expiry is already settled — use strict
+        greater-than so the just-expired contract is skipped and the next expiry
+        is returned instead.
+        """
         if self.instruments_df is None:
             self.refresh_instruments()
 
         if self.instruments_df is None or self.instruments_df.empty:
             return None, None
 
-        today = datetime.now().strftime("%Y-%m-%d")
+        now_ist     = datetime.now(_IST)
+        today       = now_ist.strftime("%Y-%m-%d")
+        after_close = now_ist >= now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+
+        # After 15:30, today's contracts have settled — skip to the next expiry.
+        expiry_dates = self.instruments_df['expiry_date']
+        date_filter  = expiry_dates > today if after_close else expiry_dates >= today
 
         option_expiries = sorted(self.instruments_df[
-            (self.instruments_df['instrument_type'].isin(['CE', 'PE'])) &
-            (self.instruments_df['expiry_date'] >= today)
+            self.instruments_df['instrument_type'].isin(['CE', 'PE']) & date_filter
         ]['expiry_date'].unique())
 
         future_expiries = sorted(self.instruments_df[
-            (self.instruments_df['instrument_type'] == 'FUT') &
-            (self.instruments_df['expiry_date'] >= today)
+            (self.instruments_df['instrument_type'] == 'FUT') & date_filter
         ]['expiry_date'].unique())
 
         return (option_expiries[0] if option_expiries else None,
                 future_expiries[0] if future_expiries else None)
+
+    @staticmethod
+    def _month_end_cutoff(now_ist: datetime) -> str:
+        """Cutoff = end of current month, extended to end of next month when
+        we're within the last 7 days (so the dropdown always shows ≥4 weeklies
+        and the next monthly, never degenerates to 1–2 entries near month-end).
+        """
+        # first day of next month
+        y, m = now_ist.year, now_ist.month
+        if m == 12:
+            next_month_start = now_ist.replace(year=y+1, month=1, day=1)
+        else:
+            next_month_start = now_ist.replace(month=m+1, day=1)
+        end_of_month = next_month_start - timedelta(days=1)
+        # If we're within last 7 days of month, extend by another month
+        if (end_of_month - now_ist).days < 7:
+            y2, m2 = end_of_month.year, end_of_month.month
+            if m2 == 12:
+                after = end_of_month.replace(year=y2+1, month=1, day=1)
+            else:
+                after = end_of_month.replace(month=m2+1, day=1)
+            # last day of the extended month
+            y3, m3 = after.year, after.month
+            if m3 == 12:
+                end_of_month = after.replace(year=y3+1, month=1, day=1) - timedelta(days=1)
+            else:
+                end_of_month = after.replace(month=m3+1, day=1) - timedelta(days=1)
+        return end_of_month.strftime("%Y-%m-%d")
+
+    def list_option_expiries(self) -> list:
+        """Returns option expiries from today through end of current month
+        (extended to next month's end when we're within the last week of the
+        current month). Covers ~4–8 weekly expiries plus the monthly anchor.
+
+        Unlike get_active_expiries(), this INCLUDES today's expiry even after
+        15:30 — the UI dropdown lets the user view/override even a settled chain.
+        """
+        if self.instruments_df is None:
+            self.refresh_instruments()
+        if self.instruments_df is None or self.instruments_df.empty:
+            return []
+
+        now_ist = datetime.now(_IST)
+        today   = now_ist.strftime("%Y-%m-%d")
+        cutoff  = self._month_end_cutoff(now_ist)
+
+        exps = sorted(self.instruments_df[
+            self.instruments_df['instrument_type'].isin(['CE', 'PE']) &
+            (self.instruments_df['expiry_date'] >= today) &
+            (self.instruments_df['expiry_date'] <= cutoff)
+        ]['expiry_date'].unique())
+        return list(exps)
+
+    def list_future_expiries(self) -> list:
+        """Returns futures expiries within the same month-end horizon as options."""
+        if self.instruments_df is None:
+            self.refresh_instruments()
+        if self.instruments_df is None or self.instruments_df.empty:
+            return []
+
+        now_ist = datetime.now(_IST)
+        today   = now_ist.strftime("%Y-%m-%d")
+        cutoff  = self._month_end_cutoff(now_ist)
+
+        exps = sorted(self.instruments_df[
+            (self.instruments_df['instrument_type'] == 'FUT') &
+            (self.instruments_df['expiry_date'] >= today) &
+            (self.instruments_df['expiry_date'] <= cutoff)
+        ]['expiry_date'].unique())
+        return list(exps)
 
     def _get_futures_symbol(self, expiry: str) -> str:
         """Resolves the exact trading symbol for Nifty Futures for a given expiry."""

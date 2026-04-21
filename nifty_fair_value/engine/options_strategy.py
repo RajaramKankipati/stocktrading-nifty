@@ -43,6 +43,20 @@ def _find_strike(options, atm_strike, side, offset_strikes):
     return sorted_opts[target_idx]
 
 
+def _spot_anchor_strike(options, spot):
+    """Returns the strike whose price is closest to current spot.
+
+    Used for BUY-trade strike anchoring: under put-skew conditions the
+    IV-balance "true ATM" can sit ~100 pts below spot, so anchoring offsets
+    from it pushes the trade into deep OTM territory where delta is weak and
+    the strike's breakeven falls beyond the LS target (max pain). Anchoring
+    on spot keeps the chosen strike ATM-from-spot (highest delta now) and
+    ensures it ends ITM at the directional target — the trade's thesis."""
+    if not options:
+        return None
+    return min(options, key=lambda o: abs(o.strike - spot)).strike
+
+
 def options_strategy(ls, ls_conf, atm_iv, opt_dte, options, atm_strike, spot, lot_size=None):
     """
     Converts LS Factor + confidence into an actionable Nifty options strategy.
@@ -170,7 +184,9 @@ def options_strategy(ls, ls_conf, atm_iv, opt_dte, options, atm_strike, spot, lo
     # what to watch for so they're ready when gravity strengthens.
     if abs_ls <= 0.35:
         if score >= 3:
-            watch_opt = _find_strike(options, atm_strike, side, 1)
+            # BUY side: anchor on spot, not true ATM — see _spot_anchor_strike()
+            spot_anchor = _spot_anchor_strike(options, spot) or atm_strike
+            watch_opt = _find_strike(options, spot_anchor, side, 1)
             watch_prem = watch_opt.call_ltp if side == 'CE' else watch_opt.put_ltp
             return _result(
                 f'WATCH — prepare BUY {side} 1-OTM @ {watch_opt.strike}', side,
@@ -205,7 +221,13 @@ def options_strategy(ls, ls_conf, atm_iv, opt_dte, options, atm_strike, spot, lo
         # score=3 or elevated IV at score≥4 — prefer OTM to reduce premium risk
         offset, size_note, style = 1, 'REDUCED SIZE', 'moderate'
 
-    opt    = _find_strike(options, atm_strike, side, offset)
+    # BUY side: anchor on spot, not true ATM — under put-skew the IV-balance
+    # "true ATM" lags spot by ~100 pts, and offsetting from it pushes strikes
+    # into deep OTM where breakeven falls beyond the LS target. Anchoring on
+    # spot gives ATM-from-spot (offset=0) or 1-OTM-from-spot (offset=1), both
+    # of which end ITM at the directional target (max pain).
+    spot_anchor = _spot_anchor_strike(options, spot) or atm_strike
+    opt    = _find_strike(options, spot_anchor, side, offset)
     strike = opt.strike
     prem   = opt.call_ltp if side == 'CE' else opt.put_ltp
 

@@ -44,6 +44,22 @@
             display: flex; align-items: center; gap: 20px;
             font-size: 12px; color: var(--text-muted); font-weight: 600; flex-wrap: wrap;
         }
+        .expiry-selector { display: flex; align-items: center; gap: 6px; }
+        .expiry-selector select {
+            background: var(--card-inner);
+            color: var(--text-main);
+            border: 1px solid var(--glass-border);
+            border-radius: 6px;
+            padding: 4px 8px;
+            font: inherit;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            outline: none;
+        }
+        .expiry-selector select:hover  { border-color: var(--cyan); }
+        .expiry-selector select:focus  { border-color: var(--cyan); box-shadow: 0 0 0 2px var(--cyan-bg); }
+        .expiry-selector select.overridden { color: var(--amber); border-color: var(--amber); }
 
         /* Glass Panel */
         .glass-panel {
@@ -224,8 +240,22 @@
                 <span id="status-dot" class="status-dot status-Initializing"></span>
                 <span id="status-text">INITIALIZING</span>
             </div>
-            <div>OPT EXP: <b id="expiry-date">—</b></div>
-            <div>FUT EXP: <b id="fut-expiry-date">—</b></div>
+            <div class="expiry-selector">
+                OPT EXP:
+                <select id="opt-expiry-select" title="Override option expiry (AUTO = nearest non-expired)">
+                    <option value="">AUTO</option>
+                </select>
+                <span id="expiry-date-dte" style="opacity:0.6; margin-left:4px;">—</span>
+                <b id="expiry-date" style="display:none;">—</b>
+            </div>
+            <div class="expiry-selector">
+                FUT EXP:
+                <select id="fut-expiry-select" title="Override futures expiry (AUTO = nearest non-expired)">
+                    <option value="">AUTO</option>
+                </select>
+                <span id="fut-expiry-date-dte" style="opacity:0.6; margin-left:4px;">—</span>
+                <b id="fut-expiry-date" style="display:none;">—</b>
+            </div>
             <div id="last-update" style="opacity:0.5">—</div>
         </div>
     </header>
@@ -471,7 +501,32 @@
 
     // ── Options Strategy ────────────────────────────────────────
     function renderOptionsStrategy(s) {
-        if (!s) return;
+        // When a tick arrives with no strategy (cache cleared after expiry
+        // change, or selected expiry returns empty chain), reset the card to
+        // placeholder state instead of silently leaving stale numbers on screen.
+        if (!s) {
+            const card = document.getElementById('opt-action-card');
+            if (card) card.className = 'opt-action-card none';
+            const actionEl = document.getElementById('opt-strategy-action');
+            if (actionEl) { actionEl.textContent = '—'; actionEl.style.color = 'var(--text-muted)'; }
+            set('opt-size-note', '');
+            set('opt-strike', '—');
+            set('opt-premium', '—');
+            set('opt-maxloss', '—');
+            set('opt-straddle-strike', '—');
+            set('opt-ce-prem', '—');
+            set('opt-pe-prem', '—');
+            set('opt-credit-lot', '—');
+            set('opt-be-upper', '—');
+            set('opt-be-lower', '—');
+            set('opt-rationale', '');
+            const warnEl = document.getElementById('opt-dte-warn');
+            if (warnEl) warnEl.innerHTML = '';
+            const ivBadge = document.getElementById('opt-iv-badge');
+            if (ivBadge) { ivBadge.textContent = '—'; ivBadge.className = 'iv-badge iv-unknown'; }
+            set('opt-iv-val', '—');
+            return;
+        }
 
         const card = document.getElementById('opt-action-card');
         if (card) {
@@ -579,7 +634,7 @@
         const checks = conf.checks || {};
         const dotMap = {
             'chk-futures': checks.futures_bias, 'chk-magnet': checks.strong_magnet,
-            'chk-intraday': checks.intraday_aligned, 'chk-corridor': checks.expiry_pull,
+            'chk-intraday': checks.regime_aligned, 'chk-corridor': checks.expiry_pull,
             'chk-pcr': checks.pcr_aligned,
         };
         for (const [id, val] of Object.entries(dotMap)) {
@@ -762,8 +817,13 @@
             banner.classList.remove('visible');
         }
 
-        set('expiry-date',     d.expiry        ? `${d.expiry} (${d.opt_dte}d)` : '—');
-        set('fut-expiry-date', d.futures_expiry ? `${d.futures_expiry} (${d.fut_dte}d)` : '—');
+        set('expiry-date',         d.expiry         ? `${d.expiry} (${d.opt_dte}d)` : '—');
+        set('fut-expiry-date',     d.futures_expiry ? `${d.futures_expiry} (${d.fut_dte}d)` : '—');
+        // DTE label next to the dropdown
+        set('expiry-date-dte',     d.opt_dte != null ? `(${d.opt_dte}d)` : '—');
+        set('fut-expiry-date-dte', d.fut_dte != null ? `(${d.fut_dte}d)` : '—');
+        // Sync dropdown selection with whatever expiry the poller actually used
+        syncExpiryDropdowns(d.expiry, d.futures_expiry);
         set('last-update',     d.ts ? (d.is_stale ? 'STALE · ' : 'LIVE · ') + new Date(d.ts * 1000).toLocaleTimeString() : '—');
 
         renderOptionsStrategy(d.options_strategy);
@@ -771,6 +831,93 @@
         renderGaps(d);
         renderLevels(d);
         if (d.chart_data) updateChain(d.chart_data, d.spot, d.atm_strike);
+    }
+
+    // ── Expiry dropdown ────────────────────────────────────────────────
+    // Server is source of truth for BOTH the available expiry list and the
+    // current override. On load we fetch once, populate the <select>s, and
+    // re-sync selection after every data tick so the UI reflects what the
+    // poller actually used (handles auto-fallback when an override is stale).
+    let _expiryState = {
+        opt_expiries: [], fut_expiries: [],
+        selected_opt: null, selected_fut: null,
+    };
+
+    function _rebuildSelect(el, expiries, selected) {
+        // Preserve focus; rebuild <option>s
+        el.innerHTML = '';
+        const autoOpt = document.createElement('option');
+        autoOpt.value = '';
+        autoOpt.textContent = 'AUTO';
+        el.appendChild(autoOpt);
+        for (const e of expiries) {
+            const o = document.createElement('option');
+            o.value = e;
+            o.textContent = e;
+            el.appendChild(o);
+        }
+        el.value = selected || '';
+        el.classList.toggle('overridden', !!selected);
+    }
+
+    async function loadExpiries() {
+        try {
+            const res = await fetch('/api/expiries');
+            const d   = await res.json();
+            _expiryState = {
+                opt_expiries: d.opt_expiries || [],
+                fut_expiries: d.fut_expiries || [],
+                selected_opt: d.selected_opt_expiry,
+                selected_fut: d.selected_fut_expiry,
+            };
+            _rebuildSelect(document.getElementById('opt-expiry-select'),
+                           _expiryState.opt_expiries, _expiryState.selected_opt);
+            _rebuildSelect(document.getElementById('fut-expiry-select'),
+                           _expiryState.fut_expiries, _expiryState.selected_fut);
+        } catch (e) {
+            console.error('Failed to load expiries', e);
+        }
+    }
+
+    function syncExpiryDropdowns(activeOpt, activeFut) {
+        // Show the actually-used expiry; highlight amber when the user has
+        // pinned an override (may or may not match the active one).
+        const optSel = document.getElementById('opt-expiry-select');
+        const futSel = document.getElementById('fut-expiry-select');
+        if (!optSel || !futSel) return;
+        // If the override is set, keep it selected — else show the active one
+        // as the "effective" selection while leaving AUTO semantics intact.
+        if (!_expiryState.selected_opt) optSel.value = '';
+        else                            optSel.value = _expiryState.selected_opt;
+        if (!_expiryState.selected_fut) futSel.value = '';
+        else                            futSel.value = _expiryState.selected_fut;
+        optSel.classList.toggle('overridden', !!_expiryState.selected_opt);
+        futSel.classList.toggle('overridden', !!_expiryState.selected_fut);
+    }
+
+    async function onExpiryChange(kind, value) {
+        // value === '' means AUTO → send null so the server clears the override
+        const body = {};
+        body[kind === 'opt' ? 'opt_expiry' : 'fut_expiry'] = value || null;
+        try {
+            const res = await fetch('/api/expiry', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+            });
+            const d = await res.json();
+            _expiryState.selected_opt = d.selected_opt_expiry;
+            _expiryState.selected_fut = d.selected_fut_expiry;
+            syncExpiryDropdowns();
+            // Rapid re-poll while the server tick is in flight — the cache is
+            // now empty and poll_status is "Refreshing"; the background tick
+            // (~0.5–1s) will replace it with fresh data for the new expiry.
+            // Poll at 300ms / 800ms / 1500ms / 2500ms to catch the fresh tick
+            // without hammering the endpoint.
+            [300, 800, 1500, 2500].forEach(ms => setTimeout(poll, ms));
+        } catch (e) {
+            console.error('Failed to set expiry', e);
+        }
     }
 
     async function poll() {
@@ -790,7 +937,14 @@
         setTimeout(poll, 5000);
     }
 
-    document.addEventListener('DOMContentLoaded', poll);
+    document.addEventListener('DOMContentLoaded', () => {
+        loadExpiries();
+        document.getElementById('opt-expiry-select')
+            .addEventListener('change', e => onExpiryChange('opt', e.target.value));
+        document.getElementById('fut-expiry-select')
+            .addEventListener('change', e => onExpiryChange('fut', e.target.value));
+        poll();
+    });
 </script>
 </body>
 </html>

@@ -391,3 +391,89 @@ class TestOptionsStrategyStrongGravity:
         conf = make_conf(direction="LONG", score=4)
         r = options_strategy(0.5, conf, 22.0, 3, self._opts(), 24_500, 24_490)
         assert "IV elevated" in r["rationale"] or "elevated" in r["rationale"].lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# BUY strike is spot-anchored, not true-ATM-anchored
+# ═══════════════════════════════════════════════════════════════════════
+class TestBuyStrikeSpotAnchored:
+    """Under put-skew the IV-balance 'true ATM' can sit ~100 pts below spot.
+    Offsetting from true ATM pushes BUY strikes into deep OTM where breakeven
+    falls beyond the LS target. BUY strike must anchor on spot so the trade
+    ends ITM at max pain (the thesis)."""
+
+    def _skewed_chain(self):
+        # 50pt spacing from 24200–24800. Spot = 24576, true ATM = 24500 (IV balance).
+        strikes = list(range(24_200, 24_801, 50))
+        return [OptionData(strike=s, call_ltp=100, put_ltp=100) for s in strikes]
+
+    def test_buy_pe_full_size_anchors_on_spot_not_true_atm(self):
+        # SHORT + score=4 + normal IV → FULL SIZE offset=0 from spot-anchor.
+        # Spot 24576 → spot-anchor = 24600. offset=0 → 24600 PE (not 24500).
+        conf = make_conf(direction="SHORT", score=4)
+        r = options_strategy(-0.5, conf, 15.0, 3, self._skewed_chain(),
+                             atm_strike=24_500, spot=24_576)
+        assert r["side"] == "PE"
+        assert r["strike"] == 24_600  # spot-anchored ATM, not true-ATM 24_500
+
+    def test_buy_pe_reduced_is_1_otm_from_spot_not_true_atm(self):
+        # SHORT + score=3 → REDUCED offset=1 PE from spot-anchor 24600 → 24550.
+        # Old (buggy) behavior would have returned 24450 (1 below true ATM).
+        conf = make_conf(direction="SHORT", score=3)
+        r = options_strategy(-0.5, conf, 15.0, 3, self._skewed_chain(),
+                             atm_strike=24_500, spot=24_576)
+        assert r["side"] == "PE"
+        assert r["strike"] == 24_550  # 1-OTM from spot-anchor 24600
+        assert r["strike"] != 24_450  # the old buggy strike
+
+    def test_buy_ce_full_size_anchors_on_spot_with_inverse_skew(self):
+        # Inverse scenario: true ATM above spot (call skew). Spot 24_424,
+        # true ATM 24_500. Spot-anchor = 24_400. LONG score=4 → FULL SIZE
+        # CE at 24_400 (not 24_500).
+        conf = make_conf(direction="LONG", score=4)
+        r = options_strategy(0.5, conf, 15.0, 3, self._skewed_chain(),
+                             atm_strike=24_500, spot=24_424)
+        assert r["side"] == "CE"
+        assert r["strike"] == 24_400
+
+    def test_buy_ce_reduced_is_1_otm_above_spot(self):
+        conf = make_conf(direction="LONG", score=3)
+        r = options_strategy(0.5, conf, 15.0, 3, self._skewed_chain(),
+                             atm_strike=24_500, spot=24_424)
+        # Spot-anchor 24_400, offset=1 CE → 24_450 (above, = 1-OTM from spot)
+        assert r["strike"] == 24_450
+
+    def test_watch_strike_also_spot_anchored(self):
+        # Weak gravity + score=3 → WATCH. Should also use spot anchor.
+        conf = make_conf(direction="SHORT", score=3)
+        r = options_strategy(-0.25, conf, 15.0, 3, self._skewed_chain(),
+                             atm_strike=24_500, spot=24_576)
+        assert r["size_note"] == "WATCH"
+        assert r["strike"] == 24_550  # 1-OTM PE from spot-anchor 24600
+
+    def test_sell_straddle_stays_on_true_atm(self):
+        # FLAT + elevated IV + DTE≥2 → SELL STRADDLE. This must remain anchored
+        # on true ATM (IV balance), NOT spot — the entire premise of short
+        # straddle is selling the IV-balance strike.
+        conf = make_conf(direction="FLAT", score=2)
+        r = options_strategy(0.05, conf, 22.0, 3, self._skewed_chain(),
+                             atm_strike=24_500, spot=24_576)
+        assert r["side"] == "STRADDLE"
+        assert r["strike"] == 24_500  # true ATM, not spot-anchor 24600
+
+    def test_expiry_day_sell_stays_on_true_atm(self):
+        # DTE=0 expiry-day SELL also anchors on true ATM (IV balance).
+        conf = make_conf(direction="LONG", score=3)
+        r = options_strategy(0.5, conf, 30.0, 0, self._skewed_chain(),
+                             atm_strike=24_500, spot=24_576)
+        # sell_side = 'PE' since is_long; offset=0 from true ATM 24_500
+        assert r["side"] == "PE"
+        assert r["strike"] == 24_500  # true ATM, not spot-anchor
+
+    def test_when_spot_equals_true_atm_behavior_unchanged(self):
+        # Regression guard: when there's no skew, spot-anchor == true ATM,
+        # so strike selection matches the pre-change behavior.
+        conf = make_conf(direction="SHORT", score=4)
+        r = options_strategy(-0.5, conf, 15.0, 3, self._skewed_chain(),
+                             atm_strike=24_500, spot=24_500)
+        assert r["strike"] == 24_500  # ATM-from-spot = true ATM

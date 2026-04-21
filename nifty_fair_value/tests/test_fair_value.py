@@ -107,10 +107,12 @@ class TestLsConfidence:
     def _conf(self, ls=0.45, directional_bias="BULLISH — premium + OI build",
               intraday_gap=80, pain_depth=2.0, expiry_gap=-80, pcr=1.2,
               data_reliable=True, regime_bias="COUNTER_TREND",
-              call_oi_hhi=0.1, put_oi_hhi=0.1):
+              call_oi_hhi=0.1, put_oi_hhi=0.1,
+              near_atm_pcr=None, max_pain_pcr=None):
         return ls_confidence(
             ls, directional_bias, intraday_gap, pain_depth, expiry_gap, pcr,
-            data_reliable, regime_bias, call_oi_hhi, put_oi_hhi
+            data_reliable, regime_bias, call_oi_hhi, put_oi_hhi,
+            near_atm_pcr=near_atm_pcr, max_pain_pcr=max_pain_pcr,
         )
 
     # ── direction detection ───────────────────────────────────────────────
@@ -371,6 +373,130 @@ class TestLsConfidence:
     def test_conflict_none_pcr_safe(self):
         c = ls_confidence(0.45, "BULLISH", 80, 2.0, -80, None)
         assert c["conflict"] is False
+
+    # ── near_atm_pcr overrides total-chain pcr ───────────────────────────
+    def test_near_atm_pcr_overrides_total_chain_for_pcr_aligned_long(self):
+        # total-chain pcr=0.85 would FAIL pcr_aligned for LONG
+        # near_atm_pcr=1.2 should override and PASS
+        c = self._conf(ls=0.45, pcr=0.85, near_atm_pcr=1.2)
+        assert c["checks"]["pcr_aligned"] is True
+
+    def test_near_atm_pcr_overrides_total_chain_for_pcr_aligned_short(self):
+        # total-chain pcr=1.2 would FAIL pcr_aligned for SHORT
+        # near_atm_pcr=0.85 should override and PASS
+        c = ls_confidence(-0.45, "BEARISH", -80, 2.0, 80, 1.2,
+                          near_atm_pcr=0.85)
+        assert c["checks"]["pcr_aligned"] is True
+
+    def test_near_atm_pcr_fails_when_opposing_direction(self):
+        # near_atm_pcr=0.85 < 1.1 → LONG pcr_aligned FAILS even if total pcr=1.3
+        c = self._conf(ls=0.45, pcr=1.3, near_atm_pcr=0.85)
+        assert c["checks"]["pcr_aligned"] is False
+
+    def test_near_atm_pcr_none_falls_back_to_total_chain_pcr(self):
+        # near_atm_pcr=None → use total-chain pcr=1.2 → LONG pcr_aligned passes
+        c = self._conf(ls=0.45, pcr=1.2, near_atm_pcr=None)
+        assert c["checks"]["pcr_aligned"] is True
+
+    def test_near_atm_pcr_boundary_exactly_1_1_fails_for_long(self):
+        # pcr > 1.1 is strict; near_atm_pcr=1.1 should NOT pass
+        c = self._conf(ls=0.45, pcr=0.5, near_atm_pcr=1.1)
+        assert c["checks"]["pcr_aligned"] is False
+
+    def test_near_atm_pcr_just_above_1_1_passes_for_long(self):
+        c = self._conf(ls=0.45, pcr=0.5, near_atm_pcr=1.11)
+        assert c["checks"]["pcr_aligned"] is True
+
+    # ── near_atm_pcr drives CONFLICTED label ─────────────────────────────
+    def test_near_atm_pcr_conflict_long_uses_near_atm_label(self):
+        # LONG with near_atm_pcr=0.75 → conflict; label should say "near-ATM PCR"
+        c = self._conf(ls=0.45, pcr=1.2, near_atm_pcr=0.75)
+        assert c["conflict"] is True
+        assert any("near-ATM PCR" in s for s in c["conflict_sources"])
+
+    def test_near_atm_pcr_conflict_short_uses_near_atm_label(self):
+        # SHORT with near_atm_pcr=1.4 → conflict; label says "near-ATM PCR"
+        c = ls_confidence(-0.45, "BEARISH", -80, 2.0, 80, 0.8,
+                          near_atm_pcr=1.4)
+        assert c["conflict"] is True
+        assert any("near-ATM PCR" in s for s in c["conflict_sources"])
+
+    def test_total_chain_pcr_conflict_uses_pcr_label_when_no_near_atm(self):
+        # No near_atm_pcr → fall back to total-chain pcr; label should say "PCR"
+        c = ls_confidence(0.45, "BULLISH", 80, 2.0, -80, 0.75,
+                          near_atm_pcr=None)
+        assert c["conflict"] is True
+        assert any(s.startswith("PCR") for s in c["conflict_sources"])
+
+    def test_near_atm_pcr_between_thresholds_no_conflict_for_long(self):
+        # near_atm_pcr=0.85 is between 0.8 and 0.9 — LONG conflict needs < 0.8
+        c = self._conf(ls=0.45, near_atm_pcr=0.85)
+        assert c["conflict"] is False
+
+    def test_near_atm_pcr_between_thresholds_no_conflict_for_short(self):
+        # near_atm_pcr=1.2 is between 0.9 and 1.3 — SHORT conflict needs > 1.3
+        c = ls_confidence(-0.45, "BEARISH", -80, 2.0, 80, 0.8,
+                          near_atm_pcr=1.2)
+        assert c["conflict"] is False
+
+    # ── max_pain_pcr gates strong_magnet ─────────────────────────────────
+    def test_max_pain_pcr_aligned_long_passes_strong_magnet(self):
+        # LONG direction, max_pain_pcr=1.4 > 1.3 → aligned → strong_magnet passes
+        c = self._conf(ls=0.45, pain_depth=2.0, call_oi_hhi=0.1,
+                       max_pain_pcr=1.4)
+        assert c["checks"]["strong_magnet"] is True
+
+    def test_max_pain_pcr_opposing_long_blocks_strong_magnet(self):
+        # LONG direction, max_pain_pcr=0.6 < 0.7 → call-writer ceiling → opposing
+        c = self._conf(ls=0.45, pain_depth=2.0, call_oi_hhi=0.1,
+                       max_pain_pcr=0.6)
+        assert c["checks"]["strong_magnet"] is False
+
+    def test_max_pain_pcr_aligned_short_passes_strong_magnet(self):
+        # SHORT direction, max_pain_pcr=0.6 ≤ 0.7 → aligned
+        c = ls_confidence(-0.45, "BEARISH", -80, 2.0, 80, 0.8,
+                          call_oi_hhi=0.1, put_oi_hhi=0.1,
+                          max_pain_pcr=0.6)
+        assert c["checks"]["strong_magnet"] is True
+
+    def test_max_pain_pcr_opposing_short_blocks_strong_magnet(self):
+        # SHORT direction, max_pain_pcr=1.4 ≥ 1.3 → put-writer floor → opposing
+        c = ls_confidence(-0.45, "BEARISH", -80, 2.0, 80, 0.8,
+                          call_oi_hhi=0.1, put_oi_hhi=0.1,
+                          max_pain_pcr=1.4)
+        assert c["checks"]["strong_magnet"] is False
+
+    def test_max_pain_pcr_none_treated_as_aligned(self):
+        # When max_pain_pcr is unavailable, don't penalise — strong_magnet still passes
+        c = self._conf(ls=0.45, pain_depth=2.0, call_oi_hhi=0.1,
+                       max_pain_pcr=None)
+        assert c["checks"]["strong_magnet"] is True
+
+    def test_max_pain_pcr_boundary_exactly_1_3_not_aligned_for_long(self):
+        # Threshold is >= 1.3 for LONG alignment; exactly 1.3 passes
+        c = self._conf(ls=0.45, pain_depth=2.0, call_oi_hhi=0.1,
+                       max_pain_pcr=1.3)
+        assert c["checks"]["strong_magnet"] is True
+
+    def test_max_pain_pcr_just_below_0_7_aligned_for_long_fails(self):
+        # For LONG, max_pain_pcr must be >= 1.3 to be aligned; 0.65 is not aligned
+        c = self._conf(ls=0.45, pain_depth=2.0, call_oi_hhi=0.1,
+                       max_pain_pcr=0.65)
+        assert c["checks"]["strong_magnet"] is False
+
+    def test_max_pain_pcr_opposing_does_not_block_other_checks(self):
+        # max_pain_pcr only gates strong_magnet, not pcr_aligned or other checks
+        c = self._conf(ls=0.45, pain_depth=2.0, call_oi_hhi=0.1, pcr=1.2,
+                       max_pain_pcr=0.6)
+        assert c["checks"]["strong_magnet"] is False
+        assert c["checks"]["pcr_aligned"] is True  # unaffected
+
+    def test_max_pain_pcr_deep_well_still_requires_hhi_concentration(self):
+        # Even with aligned max_pain_pcr, scattered OI (low HHI) → no strong_magnet
+        c = self._conf(ls=0.45, pain_depth=2.0,
+                       call_oi_hhi=0.03, put_oi_hhi=0.03,
+                       max_pain_pcr=1.4)
+        assert c["checks"]["strong_magnet"] is False
 
 
 # ═══════════════════════════════════════════════════════════════════════

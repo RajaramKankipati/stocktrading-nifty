@@ -8,8 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import threading
 import time
 import pyotp
-from datetime import datetime
-from flask import Flask, jsonify, render_template
+from datetime import datetime, timezone, timedelta
+from flask import Flask, jsonify, render_template, request
 from growwapi import GrowwAPI
 from config import settings
 from data.groww_client import GrowwClient, validate_chain
@@ -37,8 +37,49 @@ error_state = None
 poll_status = "Initializing"
 last_success_ts = 0
 
+# Wake event — set by /api/expiry when the user changes an override, so the
+# poller breaks out of its idle sleep immediately and runs a fresh tick.
+_wake_event = threading.Event()
+
+# User-selected expiry overrides (None = auto-discover nearest non-expired).
+# Set via POST /api/expiry; cleared by sending {"opt_expiry": null, "fut_expiry": null}.
+selected_opt_expiry = None
+selected_fut_expiry = None
+
+# Populated by the poller once instruments are refreshed — served to the UI dropdown.
+available_opt_expiries = []
+available_fut_expiries = []
+
+# The client handle, published once the poller has authenticated — used by the
+# /api/expiries endpoint to refresh the dropdown list on demand without waiting
+# for the next 6-hour instrument refresh.
+_client_handle = None
+
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+def _market_open() -> bool:
+    """True during NSE F&O session: Mon–Fri 09:15–15:30 IST."""
+    now = datetime.now(_IST)
+    if now.weekday() >= 5:          # Saturday / Sunday
+        return False
+    open_  = now.replace(hour=9,  minute=15, second=0, microsecond=0)
+    close_ = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    return open_ <= now <= close_
+
+
+def _refresh_expiry_lists(client):
+    """Refresh the UI-facing expiry dropdown lists."""
+    global available_opt_expiries, available_fut_expiries
+    try:
+        with lock:
+            available_opt_expiries = client.list_option_expiries()
+            available_fut_expiries = client.list_future_expiries()
+    except Exception as e:
+        print(f"[WARN] Failed to refresh expiry lists: {e}")
+
+
 def poller():
-    global metrics_cache, error_state, poll_status, last_success_ts
+    global metrics_cache, error_state, poll_status, last_success_ts, _client_handle
 
     try:
         poll_status = "Authenticating"
@@ -46,9 +87,11 @@ def poller():
         api_auth_token = GrowwAPI.get_access_token(api_key=settings.TOTP_TOKEN, totp=totp)
         groww_api = GrowwAPI(api_auth_token)
         client = GrowwClient(groww_api)
+        _client_handle = client
 
         poll_status = "Refreshing Instruments"
         client.refresh_instruments()
+        _refresh_expiry_lists(client)
 
         last_instr_refresh = time.time()
         session_baselines  = {}   # OI levels at session open — set once, never updated
@@ -62,9 +105,13 @@ def poller():
                 # Refresh instruments every 6 hours
                 if time.time() - last_instr_refresh > 21600:
                     client.refresh_instruments()
+                    _refresh_expiry_lists(client)
                     last_instr_refresh = time.time()
 
-                opt_expiry, fut_expiry = client.get_active_expiries()
+                # User-selected expiry takes precedence; otherwise auto-discover.
+                auto_opt, auto_fut = client.get_active_expiries()
+                opt_expiry = selected_opt_expiry or auto_opt
+                fut_expiry = selected_fut_expiry or auto_fut
                 if not opt_expiry or not fut_expiry:
                     raise Exception("Could not discover active Nifty expiries.")
 
@@ -76,7 +123,34 @@ def poller():
 
                 # ── Data Validation (PRD §3.3) ──
                 if not market_data or market_data.spot <= 0 or not market_data.options:
-                    raise Exception("Invalid market data received (Spot=0 or No Options).")
+                    # If the user has explicitly pinned a settled/expired contract,
+                    # don't silently loop — surface it so the UI banner explains
+                    # why nothing is showing. Covers: post-15:30 on expiry day,
+                    # or manually selecting a date that's already expired.
+                    expiry_override_in_use = (selected_opt_expiry is not None)
+                    msg = (f"Selected expiry {opt_expiry} returned no data "
+                           "(contract likely settled / expired)."
+                           if expiry_override_in_use
+                           else "Invalid market data received (Spot=0 or No Options).")
+
+                    if not _market_open():
+                        with lock:
+                            poll_status = "Market Closed"
+                            # Explicit empty-state marker so the UI resets stale
+                            # fields instead of reusing the previous expiry's numbers.
+                            metrics_cache = {
+                                "poll_status": "Market Closed",
+                                "error_msg"  : msg if expiry_override_in_use else None,
+                                "expiry"     : opt_expiry,
+                                "futures_expiry": fut_expiry,
+                                "is_stale"   : True,
+                                "ts"         : time.time(),
+                            }
+                        print(f"[POLLER] {msg} — sleeping 60s")
+                        _wake_event.wait(timeout=60)
+                        _wake_event.clear()
+                        continue
+                    raise Exception(msg)
 
                 chain_warnings = validate_chain(market_data.options, market_data.spot)
                 for w in chain_warnings:
@@ -337,7 +411,10 @@ def poller():
                         metrics_cache["error_msg"]   = error_state
                 print(f"[POLLER ERROR] {e}")
 
-            time.sleep(5)
+            # Interruptible sleep — /api/expiry sets _wake_event to trigger an
+            # immediate refresh when the user picks a new expiry.
+            _wake_event.wait(timeout=5)
+            _wake_event.clear()
 
     except Exception as e:
         with lock:
@@ -363,6 +440,67 @@ def api_data():
 def api_history():
     history = persistence.get_history()
     return jsonify(history)
+
+
+@app.route("/api/expiries", methods=["GET"])
+def api_expiries():
+    """Returns the list of available option / futures expiries plus the
+    currently-selected ones (null means auto-discover)."""
+    # Refresh lazily if the poller hasn't populated them yet.
+    if (not available_opt_expiries or not available_fut_expiries) and _client_handle:
+        _refresh_expiry_lists(_client_handle)
+    with lock:
+        return jsonify({
+            "opt_expiries"        : list(available_opt_expiries),
+            "fut_expiries"        : list(available_fut_expiries),
+            "selected_opt_expiry" : selected_opt_expiry,
+            "selected_fut_expiry" : selected_fut_expiry,
+        })
+
+
+@app.route("/api/expiry", methods=["POST"])
+def api_set_expiry():
+    """Overrides the expiry used by the poller. Send {"opt_expiry": "YYYY-MM-DD"}
+    and/or {"fut_expiry": "YYYY-MM-DD"}. Pass null to clear an override and
+    return to auto-discovery.
+
+    On any actual change we clear metrics_cache (so the UI shows a transient
+    "refreshing" state rather than stale numbers from the previous expiry) and
+    set _wake_event to interrupt the poller's idle sleep immediately.
+    """
+    global selected_opt_expiry, selected_fut_expiry, poll_status, metrics_cache
+    body = request.get_json(silent=True) or {}
+    changed = False
+
+    if "opt_expiry" in body:
+        val = body["opt_expiry"]
+        if val is not None and val not in available_opt_expiries:
+            return jsonify({"error": f"Unknown option expiry: {val}"}), 400
+        if val != selected_opt_expiry:
+            selected_opt_expiry = val
+            changed = True
+
+    if "fut_expiry" in body:
+        val = body["fut_expiry"]
+        if val is not None and val not in available_fut_expiries:
+            return jsonify({"error": f"Unknown futures expiry: {val}"}), 400
+        if val != selected_fut_expiry:
+            selected_fut_expiry = val
+            changed = True
+
+    if changed:
+        with lock:
+            # Drop stale tick so /api/data doesn't keep serving the previous
+            # expiry's numbers until the next poll completes.
+            metrics_cache = {}
+            poll_status   = "Refreshing"
+        _wake_event.set()
+
+    return jsonify({
+        "selected_opt_expiry": selected_opt_expiry,
+        "selected_fut_expiry": selected_fut_expiry,
+        "refreshing"         : changed,
+    })
 
 
 def main():
